@@ -1,0 +1,23 @@
+# GBAX / NebulaGBA — engineering baseline
+
+This fork retains the upstream GBA/GB cores and Android frontend. Phase 0 builds an unmodified emulator from the fork on an isolated branch. The baseline workflow publishes a signed debug APK as a short-lived Actions artifact, not a public release, and does not use signing secrets or custom online servers. The upstream package ID and co-op features are unchanged. Do not replace an existing install if its saves have not been backed up; different debug signing certificates may prevent updates. Test offline with a legally obtained ROM.
+
+## Target architecture (proposed, not implemented)
+
+- Preserve original GBA address ranges and mirroring for ordinary ROMs.
+- Add a separate opt-in virtual RAM window at 0x40000000..0x7FFFFFFF (maximum 1 GiB addressable). Start with a 16 MiB configurable active aperture, expand only after testing. No change to native EWRAM size.
+- Validate range/overflow for every 8/16/32-bit access. Match ARM7TDMI alignment and rotation semantics, CPU timing, DMA, debugger/core bus access, instruction fetch policy, reset and ROM lifecycle. Define whether execution from the extended region is supported; initially data only.
+- Extended memory must be off by default and must never alias normal GBA addresses. Negotiate through explicit ROM marker/version/capability plus user opt-in. Fail closed on unsupported ROMs. Do not expose uninitialized host memory.
+- Use lazy allocation/commit after measuring host memory. Do not assume the phone can allocate 1 GiB physically. Configure maximum addressable and resident budget separately.
+- Extend save states with a versioned, bounded sparse memory section and validate before restoring. Until implemented, explicitly reject extended-mode save states; never silently truncate memory. Ordinary battery saves remain separate.
+- Adapt Unholy Emerald linker/allocator only after CPU access tests. Keep IRQ, DMA-visible graphics, startup, and normal RAM compatible unless separately validated. ROM built for GBAX must not be described as standard-emulator compatible.
+- Baseline QA: launch, load GBA ROM, controls, sound, normal battery save/load, state save/load. No game ROM distributed with APK.
+
+## Phase plan
+
+0. Baseline Android APK and offline smoke test.
+1. Core extension plus host regression tests, data-only 16 MiB.
+2. Capability handshake and GBAX test ROM (original test program).
+3. Save state format and debugger/DMA compatibility.
+4. Android controls, configurable memory cap and performance.
+5. Unholy integration on separate branch. Keep standard ROM builds.
