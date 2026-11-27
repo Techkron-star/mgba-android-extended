@@ -880,10 +880,12 @@ static size_t _GBACoreStateSize(struct mCore* core) {
 }
 
 static bool _GBACoreLoadState(struct mCore* core, const void* state) {
+	if (((struct GBA*) core->board)->memory.gbax) return false;
 	return GBADeserialize(core->board, state);
 }
 
 static bool _GBACoreSaveState(struct mCore* core, void* state) {
+	if (((struct GBA*) core->board)->memory.gbax) return false;
 	GBASerialize(core->board, state);
 	return true;
 }

@@ -7,6 +7,7 @@
 #define GBA_MEMORY_H
 
 #include <mgba-util/common.h>
+#include <mgba/internal/gba/gbax-memory.h>
 
 CXX_GUARD_START
 
@@ -100,6 +101,7 @@ struct GBAPrintContext {
 };
 
 struct GBAMemory {
+	struct GBAXMemory* gbax;
 	uint32_t* bios;
 	uint32_t* wram;
 	uint32_t* iwram;
@@ -142,6 +144,7 @@ struct GBAMemory {
 struct GBA;
 void GBAMemoryInit(struct GBA* gba);
 void GBAMemoryDeinit(struct GBA* gba);
+void GBAXDisable(struct GBA* gba);
 
 void GBAMemoryReset(struct GBA* gba);
 void GBAMemoryClearAGBPrint(struct GBA* gba);

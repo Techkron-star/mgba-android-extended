@@ -21,6 +21,10 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Test GBAX sparse memory
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude tools/gbax-memory-test.c -o /tmp/gbax-test
+          /tmp/gbax-test
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
