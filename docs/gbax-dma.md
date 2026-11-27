@@ -1,0 +1,5 @@
+# GBAX DMA3 — phase 5A
+
+DMA3 accepts 32-bit source/destination addresses in RAM64 (0x40000000..0x43FFFFFF) on marked ROMs. Standard DMA0–2 masks unchanged. Immediate transfers only when any endpoint is extended, native 16/32-bit width, increment/decrement/fixed/reload destination, original DMA3 count limit (65536 units). Reject repeat, triggered timing, reserved source mode, invalid high addresses and extended range crossing before any transfer. Native memory accesses use the existing bus scheduler; no host memcpy shortcut, no CPU clock changes. SAVX MMIO cannot be used by DMA. Native state records DMA3 programmed addresses and original transfer latches.
+
+Test covers native-to-GBAX, GBAX-to-GBAX, GBAX-to-native (16-bit), crossing a 16 MiB region boundary, fixed-source fill, decrement, and rejection at aperture boundary/MMIO. Tests use actual emulated DMA events, not a host copy. Device QA, video/audio transfer tests, all channel support, triggered/repeating extended DMA and expanded transfer counts remain future work. Keep current Unholy memory layout until integration tests pass.
