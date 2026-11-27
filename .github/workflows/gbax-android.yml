@@ -1,0 +1,61 @@
+name: GBAX Android baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'feat/gbax-*'
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gbax-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-34 build-tools;34.0.0 ndk;26.3.11579264 cmake;3.22.1'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Restore debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: gbax-debug-key-${{ github.repository }}-v1
+      - name: Fetch SDL2
+        run: git clone --depth 1 --branch release-2.30.9 https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL2"
+      - name: Build debug APK
+        working-directory: src/platform/android
+        env:
+          SDL2_SRC: ${{ runner.temp }}/SDL2
+          APP_VERSION_CODE: ${{ github.run_number }}
+          ANDROID_SDK_HOME: /home/runner
+        run: bash ./build-apk.sh
+      - name: Verify APK signature and package
+        run: |
+          APK=src/platform/android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose "$APK"
+          "$ANDROID_HOME/build-tools/34.0.0/aapt" dump badging "$APK" | head -n 12
+          sha256sum "$APK" > "$APK.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gbax-android-arm64-debug
+          path: |
+            src/platform/android/app/build/outputs/apk/debug/app-debug.apk
+            src/platform/android/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error
+          retention-days: 7
