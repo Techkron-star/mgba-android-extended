@@ -16,7 +16,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-arm-none-eabi libcmocka-dev libpng-dev zlib1g-dev
+      - name: Assemble original diagnostic ROM
+        run: |
+          mkdir -p build-diagnostic
+          arm-none-eabi-as -mcpu=arm7tdmi tools/gbax-guest-test.s -o build-diagnostic/guest.o
+          arm-none-eabi-ld -Ttext=0x08000000 -e _start build-diagnostic/guest.o -o build-diagnostic/guest.elf
+          arm-none-eabi-objcopy -O binary build-diagnostic/guest.elf build-diagnostic/gbax-ram64-test.gba
+          python3 tools/gbax-fix-header.py build-diagnostic/gbax-ram64-test.gba
+      - name: Build native mGBA and guest regression
+        run: |
+          cmake -S . -B build-gbax -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DBUILD_SUITE=ON -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build-gbax --target test-gba-core -j2
+      - name: Execute ARM and Thumb on emulated CPU
+        env:
+          GBAX_TEST_ROM: ${{ github.workspace }}/build-diagnostic/gbax-ram64-test.gba
+        run: |
+          test -s "$GBAX_TEST_ROM"
+          runner="$(find build-gbax -type f -name test-gba-core -print -quit)"
+          test -n "$runner"
+          "$runner"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gbax-ram64-diagnostic-rom
+          path: build-diagnostic/gbax-ram64-test.gba
+          if-no-files-found: error
+          retention-days: 7
   android:
+    needs: guest
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

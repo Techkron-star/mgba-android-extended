@@ -16,7 +16,7 @@ This fork retains the upstream GBA/GB cores and Android frontend. Phase 0 builds
 ## Phase plan
 
 0. Baseline Android APK and offline smoke test.
-1. Core extension plus host regression tests, data-only 16 MiB.
+1. Core extension plus host regression tests, data-only 64 MiB.
 2. Capability handshake and GBAX test ROM (original test program).
 3. Save state format and debugger/DMA compatibility.
 4. Android controls, configurable memory cap and performance.
@@ -25,3 +25,7 @@ This fork retains the upstream GBA/GB cores and Android frontend. Phase 0 builds
 ## Phase 1 implementation
 
 Experimental data-only 64 MiB, 64 KiB zero-initialized pages allocated on nonzero writes. Explicit test ROM marker: 12-byte title `GBAX RAM64  `, game code `GBAX`, fixed header byte 0x96. This is ROM opt-in, not a separate UI toggle yet. Scalar CPU accesses, LDM/STM and raw view/patch supported; no instruction execution or DMA extension. Reset/unload frees all backing pages. Save states are rejected in GBAX mode; native battery saves remain unchanged. No changes to existing ROMs or SaveBlocks. Full integration/Android QA pending. Future persistent storage: 16 MiB versioned separate backing store, atomic commits, integrity checks, and explicit guest protocol before any Unholy SaveBlock migrations; do not silently resize flash or change existing saves.
+
+## Phase 2: guest CPU validation
+
+Original diagnostic ROM (tools/gbax-guest-test.s) writes and reads the first and last word of each of the 1,024 pages, checks ARM and Thumb byte/halfword/word and multiple transfers, unaligned ARM word rotation and a cross-page LDM/STM. Green screen = pass; red = fail; status word at 0x02000000. Designed for HLE/skip BIOS, no Nintendo logo or commercial ROM. Native regression executes it with a bounded instruction budget, checks raw bus access, rejects GBAX states, resets memory, then loads an unmarked ROM and verifies native RAM and legacy savestate behavior. The Android build depends on this guest test. The test does not validate DMA, external BIOS, CPU overclock or persistent storage. No production Unholy ROM changes.
