@@ -7,6 +7,7 @@
 
 #include <mgba/core/core.h>
 #include <mgba/gba/core.h>
+#include <mgba/core/serialize.h>
 #include <mgba-util/vfs.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -167,12 +168,61 @@ M_TEST_DEFINE(gbaxSavxBridge) {
 }
 #endif
 
+M_TEST_DEFINE(gbaxNamedState) {
+	const char* path=getenv("GBAX_TEST_ROM");
+	if(!path)skip();
+	struct mCore* core=GBACoreCreate();
+	assert_non_null(core);
+	assert_true(core->init(core));
+	mCoreInitConfig(core,NULL);
+	core->opts.useBios=false; core->opts.skipBios=true;
+	struct VFile* rom=VFileOpen(path,O_RDONLY);
+	assert_non_null(rom);
+	assert_true(core->loadROM(core,rom));
+	core->reset(core);
+	struct VFile* snapshot=VFileMemChunk(NULL,0);
+	assert_non_null(snapshot);
+	core->busWrite32(core,0x02000000,0xabcdef01);
+	core->busWrite32(core,0x40000000,0x11112222);
+	core->busWrite32(core,0x43fffffc,0x33334444);
+	core->busWrite32(core,0x42000000,1);
+	core->busWrite32(core,0x42000000,0);
+	assert_true(mCoreSaveStateNamed(core,snapshot,0));
+	/* 164-byte envelope + native state + two nonzero pages, no zero page. */
+	assert_int_equal(snapshot->size(snapshot),164+0x61000+2*(65536+4));
+	core->busWrite32(core,0x02000000,0);
+	core->busWrite32(core,0x40000000,0);
+	core->busWrite32(core,0x41000000,0x55556666);
+	assert_true(mCoreLoadStateNamed(core,snapshot,0));
+	assert_int_equal(core->busRead32(core,0x02000000),0xabcdef01);
+	assert_int_equal(core->busRead32(core,0x40000000),0x11112222);
+	assert_int_equal(core->busRead32(core,0x43fffffc),0x33334444);
+	assert_int_equal(core->busRead32(core,0x41000000),0);
+	/* Damage the final page, then prove that the live state is unchanged. */
+	off_t last=snapshot->size(snapshot)-1;
+	assert_int_equal(snapshot->seek(snapshot,last,SEEK_SET),last);
+	uint8_t bad=0xFF;
+	assert_int_equal(snapshot->write(snapshot,&bad,1),1);
+	core->busWrite32(core,0x02000000,0x77778888);
+	core->busWrite32(core,0x40000000,0x9999aaaa);
+	assert_false(mCoreLoadStateNamed(core,snapshot,0));
+	assert_int_equal(core->busRead32(core,0x02000000),0x77778888);
+	assert_int_equal(core->busRead32(core,0x40000000),0x9999aaaa);
+	snapshot->truncate(snapshot,20);
+	assert_false(mCoreLoadStateNamed(core,snapshot,0));
+	snapshot->close(snapshot);
+	core->unloadROM(core);
+	mCoreConfigDeinit(&core->config);
+	core->deinit(core);
+}
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
 	cmocka_unit_test(reset),
 	cmocka_unit_test(loadNullROM),
-	cmocka_unit_test(gbaxGuest)
+	cmocka_unit_test(gbaxGuest),
+	cmocka_unit_test(gbaxNamedState)
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	, cmocka_unit_test(gbaxSavxBridge)
 #endif

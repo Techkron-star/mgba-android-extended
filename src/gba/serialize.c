@@ -8,6 +8,8 @@
 #include <mgba/internal/arm/macros.h>
 #include <mgba/internal/gba/bios.h>
 #include <mgba/internal/gba/io.h>
+#include <mgba/internal/gba/gbax-savx-bridge.h>
+#include <mgba-util/crc32.h>
 
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
@@ -24,12 +26,7 @@ struct GBABundledState {
 	struct mStateExtdata* extdata;
 };
 
-void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
-	if (gba->memory.gbax) {
-		memset(state, 0, sizeof(*state));
-		mLOG(GBA_STATE, WARN, "GBAX save states not supported yet");
-		return;
-	}
+static void _GBASerializeNative(struct GBA* gba, struct GBASerializedState* state) {
 	STORE_32(GBASavestateMagic + GBASavestateVersion, 0, &state->versionMagic);
 	STORE_32(gba->biosChecksum, 0, &state->biosChecksum);
 	STORE_32(gba->romCrc32, 0, &state->romCrc32);
@@ -98,11 +95,7 @@ void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
 	}
 }
 
-bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
-	if (gba->memory.gbax) {
-		mLOG(GBA_STATE, WARN, "GBAX save states not supported yet");
-		return false;
-	}
+static bool _GBADeserializeNative(struct GBA* gba, const struct GBASerializedState* state) {
 	bool error = false;
 	int32_t check;
 	uint32_t ucheck;
@@ -249,4 +242,149 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	mTimingInterrupt(&gba->timing);
 
 	return true;
+}
+
+/* Keep the legacy fixed-size raw API isolated. GBAX named states have a
+ * separate envelope and sparse pages; raw rewind/netplay callers cannot
+ * accidentally serialize only the native part. */
+void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
+	if (gba->memory.gbax) {
+		memset(state, 0, sizeof(*state));
+		return;
+	}
+	_GBASerializeNative(gba, state);
+}
+bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
+	return !gba->memory.gbax && _GBADeserializeNative(gba, state);
+}
+
+#define GBAX_STATE_BITMAP (GBAX_PAGE_COUNT / 8)
+#define GBAX_STATE_HEADER (36u + GBAX_STATE_BITMAP)
+static const uint8_t _gbaxStateMagic[8]={'G','B','A','X','S','T','0','1'};
+
+static uint32_t _xsGet(const uint8_t* p) {
+	return (uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
+}
+static void _xsPut(uint8_t* p,uint32_t v) {
+	for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(v>>(8*i));
+}
+static bool _xsRead(struct VFile* f,void* data,size_t n) {
+	uint8_t* p=data;
+	while(n) {
+		ssize_t r=f->read(f,p,n);
+		if(r<=0 || (size_t)r>n)return false;
+		p+=r; n-=(size_t)r;
+	}
+	return true;
+}
+static bool _xsWrite(struct VFile* f,const void* data,size_t n) {
+	const uint8_t* p=data;
+	while(n) {
+		ssize_t r=f->write(f,p,n);
+		if(r<=0 || (size_t)r>n)return false;
+		p+=r; n-=(size_t)r;
+	}
+	return true;
+}
+static bool _xsNonzero(const uint8_t* p) {
+	if(!p)return false;
+	for(unsigned i=0;i<GBAX_PAGE_SIZE;++i)if(p[i])return true;
+	return false;
+}
+bool GBAXStateActive(const struct mCore* core) {
+	return core && core->board && core->platform(core)==mPLATFORM_GBA &&
+		((const struct GBA*)core->board)->memory.gbax;
+}
+bool GBAXStateFile(struct VFile* f) {
+	uint8_t magic[8];
+	if(!f || f->seek(f,0,SEEK_SET)!=0)return false;
+	bool yes=_xsRead(f,magic,sizeof(magic)) && !memcmp(magic,_gbaxStateMagic,8);
+	f->seek(f,0,SEEK_SET);
+	return yes;
+}
+bool GBAXStateSave(struct GBA* gba,struct VFile* f) {
+	if(!gba->memory.gbax || !f)return false;
+	struct GBASerializedState* native=calloc(1,sizeof(*native));
+	if(!native)return false;
+	_GBASerializeNative(gba,native);
+	uint8_t head[GBAX_STATE_HEADER]={0};
+	uint8_t invalid[GBAX_STATE_HEADER]={0};
+	uint32_t count=0;
+	for(unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+		if(_xsNonzero(gba->memory.gbax->pages[i])) {
+			head[36+i/8]|=(uint8_t)(1u<<(i%8)); ++count;
+		}
+	}
+	memcpy(head,_gbaxStateMagic,8);
+	_xsPut(head+8,1); _xsPut(head+12,gba->romCrc32);
+	_xsPut(head+16,sizeof(*native)); _xsPut(head+20,GBAX_PAGE_SIZE);
+	_xsPut(head+24,count); _xsPut(head+28,doCrc32(native,sizeof(*native)));
+	/* Header checksum covers the bitmap too, with checksum field zero. */
+	_xsPut(head+32,doCrc32(head,sizeof(head)));
+	size_t size=sizeof(head)+sizeof(*native)+(size_t)count*(GBAX_PAGE_SIZE+4);
+	bool ok=f->seek(f,0,SEEK_SET)==0 && _xsWrite(f,invalid,sizeof(invalid)) &&
+		_xsWrite(f,native,sizeof(*native));
+	for(unsigned i=0;ok && i<GBAX_PAGE_COUNT;++i) {
+		if(!(head[36+i/8]&(1u<<(i%8))))continue;
+		uint8_t crc[4];
+		_xsPut(crc,doCrc32(gba->memory.gbax->pages[i],GBAX_PAGE_SIZE));
+		ok=_xsWrite(f,crc,4) && _xsWrite(f,gba->memory.gbax->pages[i],GBAX_PAGE_SIZE);
+	}
+	if(ok) {
+		f->truncate(f,size);
+		ok=f->size(f)==(ssize_t)size && f->seek(f,0,SEEK_SET)==0 && _xsWrite(f,head,sizeof(head));
+	}
+	/* Named states are snapshots, not the durable dual-slot SAVX journal. */
+	free(native);
+	return ok;
+}
+bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
+	if(!gba->memory.gbax || !f)return false;
+	uint8_t head[GBAX_STATE_HEADER];
+	if(f->seek(f,0,SEEK_SET)!=0 || !_xsRead(f,head,sizeof(head)) ||
+		memcmp(head,_gbaxStateMagic,8) || _xsGet(head+8)!=1 ||
+		_xsGet(head+12)!=gba->romCrc32 || _xsGet(head+16)!=sizeof(struct GBASerializedState) ||
+		_xsGet(head+20)!=GBAX_PAGE_SIZE)return false;
+	uint32_t expected=_xsGet(head+32); _xsPut(head+32,0);
+	if(expected!=doCrc32(head,sizeof(head)))return false;
+	unsigned count=0;
+	for(unsigned i=0;i<GBAX_PAGE_COUNT;++i)if(head[36+i/8]&(1u<<(i%8)))++count;
+	if(count!=_xsGet(head+24) || f->size(f)!=(ssize_t)(sizeof(head)+sizeof(struct GBASerializedState)+(size_t)count*(GBAX_PAGE_SIZE+4)))return false;
+	struct GBASerializedState* native=malloc(sizeof(*native));
+	struct GBAXMemory* next=calloc(1,sizeof(*next));
+	bool ok=native && next && _xsRead(f,native,sizeof(*native)) &&
+		doCrc32(native,sizeof(*native))==_xsGet(head+28);
+	if(ok) {
+		uint32_t pc, rom, version, bios;
+		LOAD_32(pc,ARM_PC*sizeof(native->cpu.gprs[0]),native->cpu.gprs);
+		LOAD_32(rom,0,&native->romCrc32);
+		LOAD_32(version,0,&native->versionMagic);
+		LOAD_32(bios,0,&native->biosChecksum);
+		/* GBAX is data-only: reject execution from extended or unknown regions.
+		 * Require exact native version/ROM/BIOS for this experimental format. */
+		unsigned region=pc>>24;
+		ok=rom==gba->romCrc32 && version==GBASavestateMagic+GBASavestateVersion &&
+			bios==gba->biosChecksum && !(pc&1) &&
+			(region==0 || region==2 || region==3 || (region>=8 && region<=13));
+	}
+	for(unsigned i=0;ok && i<GBAX_PAGE_COUNT;++i) {
+		if(!(head[36+i/8]&(1u<<(i%8))))continue;
+		uint8_t crc[4];
+		next->pages[i]=malloc(GBAX_PAGE_SIZE);
+		ok=next->pages[i] && _xsRead(f,crc,4) && _xsRead(f,next->pages[i],GBAX_PAGE_SIZE) &&
+			_xsGet(crc)==doCrc32(next->pages[i],GBAX_PAGE_SIZE);
+		if(ok)++next->allocatedPages;
+	}
+	/* Do not mutate live memory until the complete envelope is validated. */
+	if(ok)ok=_GBADeserializeNative(gba,native);
+	if(ok) {
+		struct GBAXMemory* old=gba->memory.gbax;
+		gba->memory.gbax=next;
+		next=old;
+		/* Never roll back persistent storage. LOAD is required before COMMIT. */
+		GBAXSaveReset(&gba->memory);
+	}
+	GBAXClear(next);
+	free(next); free(native);
+	return ok;
 }

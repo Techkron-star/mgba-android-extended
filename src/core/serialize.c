@@ -11,6 +11,9 @@
 #include <mgba/core/version.h>
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
+#ifdef M_CORE_GBA
+#include <mgba/internal/gba/serialize.h>
+#endif
 
 #ifdef USE_PNG
 #include <mgba-util/image/png-io.h>
@@ -380,6 +383,9 @@ static bool _loadPNGExtdata(struct VFile* vf, struct mStateExtdata* extdata) {
 #endif
 
 bool mCoreSaveStateNamed(struct mCore* core, struct VFile* vf, int flags) {
+#ifdef M_CORE_GBA
+	if (GBAXStateActive(core)) return GBAXStateSave(core->board, vf);
+#endif
 	struct mStateExtdata extdata;
 	mStateExtdataInit(&extdata);
 	size_t stateSize = core->stateSize(core);
@@ -503,6 +509,9 @@ bool mCoreSaveStateNamed(struct mCore* core, struct VFile* vf, int flags) {
 }
 
 void* mCoreExtractState(struct mCore* core, struct VFile* vf, struct mStateExtdata* extdata) {
+#ifdef M_CORE_GBA
+	if (GBAXStateActive(core) || GBAXStateFile(vf)) return NULL;
+#endif
 #ifdef USE_PNG
 	if (isPNG(vf)) {
 		return _loadPNGState(core, vf, extdata);
@@ -522,6 +531,9 @@ void* mCoreExtractState(struct mCore* core, struct VFile* vf, struct mStateExtda
 }
 
 bool mCoreExtractExtdata(struct mCore* core, struct VFile* vf, struct mStateExtdata* extdata) {
+#ifdef M_CORE_GBA
+	if (GBAXStateActive(core) || GBAXStateFile(vf)) return false;
+#endif
 #ifdef USE_PNG
 	if (isPNG(vf)) {
 		return _loadPNGExtdata(vf, extdata);
@@ -536,6 +548,10 @@ bool mCoreExtractExtdata(struct mCore* core, struct VFile* vf, struct mStateExtd
 }
 
 bool mCoreLoadStateNamed(struct mCore* core, struct VFile* vf, int flags) {
+#ifdef M_CORE_GBA
+	if (GBAXStateActive(core)) return GBAXStateLoad(core->board, vf);
+	if (GBAXStateFile(vf)) return false;
+#endif
 	struct mStateExtdata extdata;
 	mStateExtdataInit(&extdata);
 	void* state = mCoreExtractState(core, vf, &extdata);

@@ -500,6 +500,12 @@ struct VDir;
 void GBASerialize(struct GBA* gba, struct GBASerializedState* state);
 bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state);
 
+struct VFile;
+bool GBAXStateActive(const struct mCore* core);
+bool GBAXStateFile(struct VFile* f);
+bool GBAXStateSave(struct GBA* gba, struct VFile* f);
+bool GBAXStateLoad(struct GBA* gba, struct VFile* f);
+
 CXX_GUARD_END
 
 #endif

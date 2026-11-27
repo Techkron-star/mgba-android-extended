@@ -26,6 +26,7 @@
 #ifdef M_CORE_GBA
 #include <mgba/gba/core.h>
 #include <mgba/gba/interface.h>
+#include <mgba/internal/gba/serialize.h>
 #endif
 #ifndef MINIMAL_CORE
 #include <mgba/feature/video-logger.h>
@@ -349,13 +350,21 @@ struct VFile* mCoreGetState(struct mCore* core, int slot, bool write) {
 		return NULL;
 	}
 	char name[PATH_MAX + 14]; // Quash warning
+	#ifdef M_CORE_GBA
+	snprintf(name, sizeof(name), GBAXStateActive(core) ? "%s.xs%i" : "%s.ss%i", core->dirs.baseName, slot);
+#else
 	snprintf(name, sizeof(name), "%s.ss%i", core->dirs.baseName, slot);
+#endif
 	return core->dirs.state->openFile(core->dirs.state, name, write ? (O_CREAT | O_TRUNC | O_RDWR) : O_RDONLY);
 }
 
 void mCoreDeleteState(struct mCore* core, int slot) {
 	char name[PATH_MAX + 14]; // Quash warning
+	#ifdef M_CORE_GBA
+	snprintf(name, sizeof(name), GBAXStateActive(core) ? "%s.xs%i" : "%s.ss%i", core->dirs.baseName, slot);
+#else
 	snprintf(name, sizeof(name), "%s.ss%i", core->dirs.baseName, slot);
+#endif
 	core->dirs.state->deleteFile(core->dirs.state, name);
 }
 
