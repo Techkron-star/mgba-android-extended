@@ -138,6 +138,7 @@ static void GBAInit(void* cpu, struct mCPUComponent* component) {
 }
 
 void GBAUnloadROM(struct GBA* gba) {
+	GBAXDisable(gba);
 	GBAMemoryClearAGBPrint(gba);
 	if (gba->memory.unl.type) {
 		GBAUnlCartUnload(gba);
@@ -489,6 +490,15 @@ bool GBALoadROM(struct GBA* gba, struct VFile* vf) {
 	}
 	GBAHardwareInit(&gba->memory.hw, &((uint16_t*) gba->memory.rom)[GPIO_REG_DATA >> 1]);
 	GBAUnlCartDetect(gba);
+	if (GBAXMarkedROM(gba->memory.rom, gba->pristineRomSize)) {
+		gba->memory.gbax = calloc(1, sizeof(*gba->memory.gbax));
+		if (!gba->memory.gbax) {
+			mLOG(GBA, ERROR, "Could not allocate GBAX page table");
+			GBAUnloadROM(gba);
+			return false;
+		}
+		mLOG(GBA, INFO, "GBAX data RAM: 64 MiB, lazy pages");
+	}
 	// TODO: error check
 	return true;
 }

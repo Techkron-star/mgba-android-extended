@@ -5,7 +5,7 @@ This fork retains the upstream GBA/GB cores and Android frontend. Phase 0 builds
 ## Target architecture (proposed, not implemented)
 
 - Preserve original GBA address ranges and mirroring for ordinary ROMs.
-- Add a separate opt-in virtual RAM window at 0x40000000..0x7FFFFFFF (maximum 1 GiB addressable). Start with a 16 MiB configurable active aperture, expand only after testing. No change to native EWRAM size.
+- Add a separate opt-in virtual RAM window at 0x40000000..0x7FFFFFFF (original design maximum 1 GiB addressable). Revised target: fixed 64 MiB window 0x40000000..0x43FFFFFF. No change to native EWRAM size.
 - Validate range/overflow for every 8/16/32-bit access. Match ARM7TDMI alignment and rotation semantics, CPU timing, DMA, debugger/core bus access, instruction fetch policy, reset and ROM lifecycle. Define whether execution from the extended region is supported; initially data only.
 - Extended memory must be off by default and must never alias normal GBA addresses. Negotiate through explicit ROM marker/version/capability plus user opt-in. Fail closed on unsupported ROMs. Do not expose uninitialized host memory.
 - Use lazy allocation/commit after measuring host memory. Do not assume the phone can allocate 1 GiB physically. Configure maximum addressable and resident budget separately.
@@ -21,3 +21,7 @@ This fork retains the upstream GBA/GB cores and Android frontend. Phase 0 builds
 3. Save state format and debugger/DMA compatibility.
 4. Android controls, configurable memory cap and performance.
 5. Unholy integration on separate branch. Keep standard ROM builds.
+
+## Phase 1 implementation
+
+Experimental data-only 64 MiB, 64 KiB zero-initialized pages allocated on nonzero writes. Explicit test ROM marker: 12-byte title `GBAX RAM64  `, game code `GBAX`, fixed header byte 0x96. This is ROM opt-in, not a separate UI toggle yet. Scalar CPU accesses, LDM/STM and raw view/patch supported; no instruction execution or DMA extension. Reset/unload frees all backing pages. Save states are rejected in GBAX mode; native battery saves remain unchanged. No changes to existing ROMs or SaveBlocks. Full integration/Android QA pending. Future persistent storage: 16 MiB versioned separate backing store, atomic commits, integrity checks, and explicit guest protocol before any Unholy SaveBlock migrations; do not silently resize flash or change existing saves.

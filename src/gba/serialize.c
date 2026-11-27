@@ -25,6 +25,11 @@ struct GBABundledState {
 };
 
 void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
+	if (gba->memory.gbax) {
+		memset(state, 0, sizeof(*state));
+		mLOG(GBA_STATE, WARN, "GBAX save states not supported yet");
+		return;
+	}
 	STORE_32(GBASavestateMagic + GBASavestateVersion, 0, &state->versionMagic);
 	STORE_32(gba->biosChecksum, 0, &state->biosChecksum);
 	STORE_32(gba->romCrc32, 0, &state->romCrc32);
@@ -94,6 +99,10 @@ void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
 }
 
 bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
+	if (gba->memory.gbax) {
+		mLOG(GBA_STATE, WARN, "GBAX save states not supported yet");
+		return false;
+	}
 	bool error = false;
 	int32_t check;
 	uint32_t ucheck;
