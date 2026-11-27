@@ -501,6 +501,7 @@ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
 	if (memory->gbax && GBAXSaveRegister(address)) {
+		if (cpu->memory.accessSource == mACCESS_DMA) return 0;
 		if (cycleCounter) *cycleCounter += 2;
 		return GBAXSaveReadRegister(memory, address);
 	}
@@ -872,6 +873,7 @@ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycle
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
 	if (memory->gbax && GBAXSaveRegister(address)) {
+		if (cpu->memory.accessSource == mACCESS_DMA) return;
 		GBAXSaveWriteRegister(memory, address, (uint32_t)value);
 		if (cycleCounter) ++*cycleCounter;
 		return;

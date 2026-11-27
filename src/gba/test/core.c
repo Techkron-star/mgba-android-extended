@@ -216,13 +216,67 @@ M_TEST_DEFINE(gbaxNamedState) {
 	core->deinit(core);
 }
 
+static void _gbaxDMA3(struct mCore* core,uint32_t src,uint32_t dst,uint16_t count,uint16_t control) {
+	core->busWrite32(core,0x040000d4,src);
+	core->busWrite32(core,0x040000d8,dst);
+	core->busWrite16(core,0x040000dc,count);
+	core->busWrite16(core,0x040000de,control);
+}
+M_TEST_DEFINE(gbaxDMA3) {
+	const char* path=getenv("GBAX_TEST_ROM");
+	if(!path)skip();
+	struct mCore* core=GBACoreCreate();
+	assert_non_null(core);
+	assert_true(core->init(core));
+	mCoreInitConfig(core,NULL);
+	core->opts.useBios=false; core->opts.skipBios=true;
+	struct VFile* rom=VFileOpen(path,O_RDONLY);
+	assert_non_null(rom);
+	assert_true(core->loadROM(core,rom));
+	core->reset(core);
+	/* Run a safe branch-to-self in native IWRAM instead of the diagnostic.
+	 * Use the core register API to set PC, with ARM mode left unchanged. */
+	core->busWrite32(core,0x03000000,0xeafffffe);
+	assert_true(core->writeRegister(core,"pc",0x03000000));
+	for(unsigned i=0;i<32;++i)core->busWrite32(core,0x02001000+4*i,0x12340000+i);
+	_gbaxDMA3(core,0x02001000,0x40ffffe0,32,0x8400);
+	for(unsigned i=0;i<2048;++i)core->step(core);
+	for(unsigned i=0;i<32;++i)assert_int_equal(core->busRead32(core,0x40ffffe0+4*i),0x12340000+i);
+	_gbaxDMA3(core,0x40ffffe0,0x43ffff80,32,0x8400);
+	for(unsigned i=0;i<2048;++i)core->step(core);
+	for(unsigned i=0;i<32;++i)assert_int_equal(core->busRead32(core,0x43ffff80+4*i),0x12340000+i);
+	_gbaxDMA3(core,0x43ffff80,0x02002000,64,0x8000);
+	for(unsigned i=0;i<2048;++i)core->step(core);
+	for(unsigned i=0;i<32;++i)assert_int_equal(core->busRead32(core,0x02002000+4*i),0x12340000+i);
+	/* Fixed source fill and decrement copy. */
+	_gbaxDMA3(core,0x02001000,0x42000000,16,0x8500);
+	for(unsigned i=0;i<2048;++i)core->step(core);
+	for(unsigned i=0;i<16;++i)assert_int_equal(core->busRead32(core,0x42000000+4*i),0x12340000);
+	_gbaxDMA3(core,0x0200107c,0x4200017c,32,0x84a0);
+	for(unsigned i=0;i<2048;++i)core->step(core);
+	for(unsigned i=0;i<32;++i)assert_int_equal(core->busRead32(core,0x42000100+4*i),0x12340000+i);
+	/* Crossing the aperture is rejected before any word is written. */
+	core->busWrite32(core,0x43fffffc,0xabcdef01);
+	_gbaxDMA3(core,0x02001000,0x43fffffc,2,0x8400);
+	for(unsigned i=0;i<64;++i)core->step(core);
+	assert_int_equal(core->busRead32(core,0x43fffffc),0xabcdef01);
+	assert_int_equal(core->busRead16(core,0x040000de)&0x8000,0);
+	/* The SAVX control register must not be reachable via DMA. */
+	_gbaxDMA3(core,0x02001000,0x44000008,1,0x8400);
+	assert_int_equal(core->busRead16(core,0x040000de)&0x8000,0);
+	core->unloadROM(core);
+	mCoreConfigDeinit(&core->config);
+	core->deinit(core);
+}
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
 	cmocka_unit_test(reset),
 	cmocka_unit_test(loadNullROM),
 	cmocka_unit_test(gbaxGuest),
-	cmocka_unit_test(gbaxNamedState)
+	cmocka_unit_test(gbaxNamedState),
+	cmocka_unit_test(gbaxDMA3)
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	, cmocka_unit_test(gbaxSavxBridge)
 #endif

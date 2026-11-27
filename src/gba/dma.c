@@ -49,6 +49,20 @@ void GBADMAReset(struct GBA* gba) {
 	gba->memory.dma[3].count = 0x10000;
 	gba->memory.activeDMA = -1;
 }
+/* GBAX DMA3 opts into the extended data window only. Other channels
+ * retain original masks. Reject invalid high addresses instead of aliasing
+ * them into ordinary RAM or invoking an MMIO command. */
+static bool _gbaxDMAAddress(const struct GBAMemory* m,int dma,uint32_t address) {
+	return dma==3 && GBAXContains(m->gbax,address);
+}
+static bool _gbaxDMAEndpoint(uint32_t address,unsigned width,int offset,uint32_t count) {
+	if(!count || (width!=2 && width!=4))return false;
+	int64_t first=(int64_t)(address & ~(uint32_t)(width-1));
+	int64_t last=first+(int64_t)offset*(count-1);
+	int64_t low=first<last?first:last;
+	int64_t high=first>last?first:last;
+	return low>=GBAX_RAM_BASE && high+width<=(int64_t)GBAX_RAM_BASE+GBAX_RAM_SIZE;
+}
 static bool _isValidDMASAD(int dma, uint32_t address) {
 	if (dma == 0 && address >= GBA_BASE_ROM0 && address < GBA_BASE_SRAM) {
 		return false;
@@ -65,7 +79,9 @@ uint32_t GBADMAWriteSAD(struct GBA* gba, int dma, uint32_t address) {
 	if (!_isValidDMASAD(dma, address)) {
 		mLOG(GBA_DMA, GAME_ERROR, "Invalid DMA source address: 0x%08X", address);
 	}
-	memory->dma[dma].source = address & DMA_SRC_MASK[dma];
+	if (_gbaxDMAAddress(memory,dma,address)) memory->dma[dma].source=address & ~1u;
+	else if (memory->gbax && dma==3 && address>=0x10000000u) memory->dma[dma].source=address & ~1u;
+	else memory->dma[dma].source = address & DMA_SRC_MASK[dma];
 	return memory->dma[dma].source;
 }
 
@@ -74,7 +90,9 @@ uint32_t GBADMAWriteDAD(struct GBA* gba, int dma, uint32_t address) {
 	if (!_isValidDMADAD(dma, address)) {
 		mLOG(GBA_DMA, GAME_ERROR, "Invalid DMA destination address: 0x%08X", address);
 	}
-	memory->dma[dma].dest = address & DMA_DST_MASK[dma];
+	if (_gbaxDMAAddress(memory,dma,address)) memory->dma[dma].dest=address & ~1u;
+	else if (memory->gbax && dma==3 && address>=0x10000000u) memory->dma[dma].dest=address & ~1u;
+	else memory->dma[dma].dest = address & DMA_DST_MASK[dma];
 	return memory->dma[dma].dest;
 }
 
@@ -120,6 +138,23 @@ uint16_t GBADMAWriteCNT_HI(struct GBA* gba, int dma, uint16_t control) {
 		currentDma->nextSource = currentDma->source;
 		currentDma->nextDest = currentDma->dest;
 		GBADMAReload(gba, dma);
+
+		if (memory->gbax && dma==3 &&
+			(currentDma->source>=0x10000000u || currentDma->dest>=0x10000000u)) {
+			/* This first extension is bounded, immediate-only. Ordinary
+			 * hardware addresses remain usable on the opposite endpoint. */
+			bool srcOK=currentDma->source<0x10000000u ||
+				_gbaxDMAEndpoint(currentDma->source,width,currentDma->sourceOffset,currentDma->count);
+			bool dstOK=currentDma->dest<0x10000000u ||
+				_gbaxDMAEndpoint(currentDma->dest,width,currentDma->destOffset,currentDma->count);
+			if (!srcOK || !dstOK || GBADMARegisterGetTiming(currentDma->reg)!=GBA_DMA_TIMING_NOW ||
+				GBADMARegisterIsRepeat(currentDma->reg) || GBADMARegisterGetSrcControl(currentDma->reg)==3) {
+				mLOG(GBA_DMA, WARN, "Rejected unsupported GBAX DMA3 transfer");
+				currentDma->reg=GBADMARegisterClearEnable(currentDma->reg);
+				currentDma->nextCount=0;
+				return currentDma->reg;
+			}
+		}
 
 		if (currentDma->nextSource & (width - 1)) {
 			mLOG(GBA_DMA, GAME_ERROR, "Misaligned DMA source address: 0x%08X", currentDma->nextSource);
@@ -377,6 +412,10 @@ void GBADMARecalculateCycles(struct GBA* gba) {
 }
 
 void GBADMASerialize(const struct GBA* gba, struct GBASerializedState* state) {
+	if (gba->memory.gbax) {
+		STORE_32(gba->memory.dma[3].source,GBA_REG_DMA3SAD_LO,state->io);
+		STORE_32(gba->memory.dma[3].dest,GBA_REG_DMA3DAD_LO,state->io);
+	}
 	int i;
 	for (i = 0; i < 4; ++i) {
 		STORE_32(gba->memory.dma[i].nextSource, 0, &state->dma[i].nextSource);
@@ -394,6 +433,17 @@ void GBADMASerialize(const struct GBA* gba, struct GBASerializedState* state) {
 }
 
 void GBADMADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
+	if (gba->memory.gbax) {
+		uint32_t src,dst;
+		LOAD_32(src,GBA_REG_DMA3SAD_LO,state->io);
+		LOAD_32(dst,GBA_REG_DMA3DAD_LO,state->io);
+		gba->memory.dma[3].source=src;
+		gba->memory.dma[3].dest=dst;
+		gba->memory.io[GBA_REG_DMA3SAD_LO>>1]=(uint16_t)src;
+		gba->memory.io[GBA_REG_DMA3SAD_HI>>1]=(uint16_t)(src>>16);
+		gba->memory.io[GBA_REG_DMA3DAD_LO>>1]=(uint16_t)dst;
+		gba->memory.io[GBA_REG_DMA3DAD_HI>>1]=(uint16_t)(dst>>16);
+	}
 	uint32_t version;
 	LOAD_32(version, 0, &state->versionMagic);
 
