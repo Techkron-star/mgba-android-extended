@@ -77,10 +77,10 @@ M_TEST_DEFINE(gbaxGuest) {
 	assert_int_equal(core->busRead32(core, 0x40000100), 0xcdefab78);
 	core->rawWrite32(core, 0x41001000, -1, 0x42abc123);
 	assert_int_equal(core->busRead32(core, 0x41001000), 0x42abc123);
-	void* state = calloc(1, core->stateSize(core));
-	assert_non_null(state);
-	assert_false(core->saveState(core, state));
-	assert_false(core->loadState(core, state));
+	void* snapshot = calloc(1, core->stateSize(core));
+	assert_non_null(snapshot);
+	assert_false(core->saveState(core, snapshot));
+	assert_false(core->loadState(core, snapshot));
 	core->reset(core);
 	assert_int_equal(core->rawRead32(core, 0x40000000, -1), 0);
 	assert_int_equal(core->rawRead32(core, 0x43fffffc, -1), 0);
@@ -100,9 +100,9 @@ M_TEST_DEFINE(gbaxGuest) {
 	assert_int_equal(core->busRead32(core, 0x02000000), 0x12345678);
 	core->rawWrite32(core, 0x40000000, -1, 0xffffffff);
 	assert_int_equal(core->rawRead32(core, 0x40000000, -1), 0);
-	assert_true(core->saveState(core, state));
-	assert_true(core->loadState(core, state));
-	free(state);
+	assert_true(core->saveState(core, snapshot));
+	assert_true(core->loadState(core, snapshot));
+	free(snapshot);
 	core->unloadROM(core);
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
