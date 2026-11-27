@@ -49,9 +49,14 @@ jobs:
           GBAX_TEST_ROM: ${{ github.workspace }}/build-diagnostic/gbax-ram64-test.gba
         run: |
           test -s "$GBAX_TEST_ROM"
+          mkdir -p build-diagnostic/savx-integration
+          export GBAX_SAVX_TEST_ROM="$PWD/build-diagnostic/savx-integration/persistent.gba"
+          cp "$GBAX_TEST_ROM" "$GBAX_SAVX_TEST_ROM"
           runner="$(find build-gbax -type f -name test-gba-core -print -quit)"
           test -n "$runner"
           "$runner"
+          test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.0)" = 16777252
+          test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.1)" = 16777252
       - uses: actions/upload-artifact@v4
         with:
           name: gbax-ram64-diagnostic-rom

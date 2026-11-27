@@ -15,6 +15,8 @@ set(SOURCE_FILES
 	core.c
 	dma.c
 	gba.c
+	gbax-savx.c
+	gbax-savx-bridge.c
 	hle-bios.c
 	input.c
 	io.c

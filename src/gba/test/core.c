@@ -108,9 +108,72 @@ M_TEST_DEFINE(gbaxGuest) {
 	core->deinit(core);
 }
 
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+M_TEST_DEFINE(gbaxSavxBridge) {
+    const char* path=getenv("GBAX_SAVX_TEST_ROM");
+    if(!path)skip();
+    const uint32_t reg=0x44000000, stage=0x43000000;
+    struct mCore* core=GBACoreCreate();
+    assert_non_null(core);
+    assert_true(core->init(core));
+    mCoreInitConfig(core,NULL);
+    core->opts.useBios=false; core->opts.skipBios=true;
+    assert_true(mCoreLoadFile(core,path));
+    assert_true(mCoreAutoloadSave(core));
+    core->reset(core);
+    assert_int_equal(core->busRead32(core,reg),0x58564153);
+    assert_int_equal(core->busRead32(core,reg+4),1);
+    core->busWrite32(core,reg+8,2);
+    assert_int_equal(core->busRead32(core,reg+4),0x104);
+    core->busWrite32(core,reg+8,1);
+    assert_int_equal(core->busRead32(core,reg+4),3);
+    core->busWrite32(core,stage,0x1234abcd);
+    core->busWrite32(core,0x43fffffc,0xdeadbeef);
+    core->busWrite32(core,0x40000000,0x98765432);
+    core->busWrite32(core,reg+8,2);
+    assert_int_equal(core->busRead32(core,reg+4),4);
+    assert_int_equal(core->busRead32(core,reg+12),1);
+    core->busWrite32(core,stage,0x87654321);
+    core->busWrite32(core,reg+8,2);
+    assert_int_equal(core->busRead32(core,reg+4),4);
+    assert_int_equal(core->busRead32(core,reg+12),2);
+    core->reset(core);
+    assert_int_equal(core->busRead32(core,stage),0);
+    assert_int_equal(core->busRead32(core,reg+4),1);
+    core->busWrite32(core,reg+8,1);
+    assert_int_equal(core->busRead32(core,reg+4),2);
+    assert_int_equal(core->busRead32(core,stage),0x87654321);
+    assert_int_equal(core->busRead32(core,0x43fffffc),0xdeadbeef);
+    assert_int_equal(core->busRead32(core,0x40000000),0);
+    core->unloadROM(core);
+    mCoreConfigDeinit(&core->config);
+    core->deinit(core);
+    core=GBACoreCreate();
+    assert_non_null(core);
+    assert_true(core->init(core));
+    mCoreInitConfig(core,NULL);
+    core->opts.useBios=false; core->opts.skipBios=true;
+    assert_true(mCoreLoadFile(core,path));
+    assert_true(mCoreAutoloadSave(core));
+    core->reset(core);
+    core->busWrite32(core,reg+8,1);
+    assert_int_equal(core->busRead32(core,reg+4),2);
+    assert_int_equal(core->rawRead32(core,reg+12,-1),2);
+    assert_int_equal(core->busRead32(core,stage),0x87654321);
+    assert_int_equal(core->busRead32(core,0x43fffffc),0xdeadbeef);
+    core->unloadROM(core);
+    mCoreConfigDeinit(&core->config);
+    core->deinit(core);
+}
+#endif
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
 	cmocka_unit_test(reset),
 	cmocka_unit_test(loadNullROM),
-	cmocka_unit_test(gbaxGuest))
+	cmocka_unit_test(gbaxGuest)
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+	, cmocka_unit_test(gbaxSavxBridge)
+#endif
+)

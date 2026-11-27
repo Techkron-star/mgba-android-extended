@@ -25,6 +25,7 @@
 #include <mgba/internal/gba/renderers/proxy.h>
 #include <mgba/internal/gba/renderers/video-software.h>
 #include <mgba/internal/gba/savedata.h>
+#include <mgba/internal/gba/gbax-savx-bridge.h>
 #include <mgba/internal/gba/serialize.h>
 #include <mgba-util/crc32.h>
 #ifdef USE_ELF
@@ -653,7 +654,27 @@ static bool _GBACoreLoadBIOS(struct mCore* core, struct VFile* vf, int type) {
 }
 
 static bool _GBACoreLoadSave(struct mCore* core, struct VFile* vf) {
-	return GBALoadSave(core->board, vf);
+	struct GBA* gba = core->board;
+	bool ok = GBALoadSave(gba, vf);
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+	if (ok && gba->memory.gbax && core->dirs.save && core->dirs.base) {
+		int player = 0;
+		char a[48], b[48];
+		mCoreConfigGetIntValue(&core->config, "savePlayerId", &player);
+		if (player > 1) {
+			snprintf(a, sizeof(a), ".p%d.savx.0", player);
+			snprintf(b, sizeof(b), ".p%d.savx.1", player);
+		} else {
+			strcpy(a, ".savx.0");
+			strcpy(b, ".savx.1");
+		}
+		struct VFile* fa = mDirectorySetOpenSuffix(&core->dirs, core->dirs.save, a, O_CREAT | O_RDWR);
+		struct VFile* fb = mDirectorySetOpenSuffix(&core->dirs, core->dirs.save, b, O_CREAT | O_RDWR);
+		if (!GBAXSaveAttach(&gba->memory, fa, fb, gba->romCrc32))
+			mLOG(GBA, WARN, "GBAX SAVX sidecars unavailable; conventional save remains usable");
+	}
+#endif
+	return ok;
 }
 
 static bool _GBACoreLoadTemporarySave(struct mCore* core, struct VFile* vf) {

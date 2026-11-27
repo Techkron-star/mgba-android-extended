@@ -100,8 +100,10 @@ struct GBAPrintContext {
 	uint16_t put;
 };
 
+struct GBAXSaveSession;
 struct GBAMemory {
 	struct GBAXMemory* gbax;
+	struct GBAXSaveSession* savx;
 	uint32_t* bios;
 	uint32_t* wram;
 	uint32_t* iwram;

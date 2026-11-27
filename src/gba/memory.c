@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba/internal/gba/memory.h>
+#include <mgba/internal/gba/gbax-savx-bridge.h>
 
 #include <mgba/internal/arm/decoder.h>
 #include <mgba/internal/arm/macros.h>
@@ -40,6 +41,7 @@ static const char GBA_ROM_WAITSTATES[] = { 4, 3, 2, 8 };
 static const char GBA_ROM_WAITSTATES_SEQ[] = { 2, 1, 4, 1, 8, 1 };
 
 void GBAXDisable(struct GBA* gba) {
+	GBAXSaveDetach(&gba->memory);
 	GBAXClear(gba->memory.gbax);
 	free(gba->memory.gbax);
 	gba->memory.gbax = NULL;
@@ -53,6 +55,7 @@ static void _GBAXStore(struct GBAMemory* memory, uint32_t address, unsigned widt
 }
 
 void GBAMemoryInit(struct GBA* gba) {
+	gba->memory.savx = NULL;
 	gba->memory.gbax = NULL;
 	struct ARMCore* cpu = gba->cpu;
 	cpu->memory.load32 = GBALoad32;
@@ -132,6 +135,7 @@ void GBAMemoryDeinit(struct GBA* gba) {
 }
 
 void GBAMemoryReset(struct GBA* gba) {
+	GBAXSaveReset(&gba->memory);
 	GBAXClear(gba->memory.gbax);
 	if (gba->memory.wram && gba->memory.rom) {
 		memset(gba->memory.wram, 0, GBA_SIZE_EWRAM);
@@ -496,6 +500,10 @@ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 	int wait = 0;
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
+	if (memory->gbax && GBAXSaveRegister(address)) {
+		if (cycleCounter) *cycleCounter += 2;
+		return GBAXSaveReadRegister(memory, address);
+	}
 	if (GBAXContains(memory->gbax, address)) {
 		value = GBAXRead(memory->gbax, address, 4);
 		if (cycleCounter) *cycleCounter += 2;
@@ -863,6 +871,11 @@ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycle
 	int32_t oldValue;
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
+	if (memory->gbax && GBAXSaveRegister(address)) {
+		GBAXSaveWriteRegister(memory, address, (uint32_t)value);
+		if (cycleCounter) ++*cycleCounter;
+		return;
+	}
 	if (GBAXContains(memory->gbax, address)) {
 		_GBAXStore(memory, address, 4, (uint32_t) value);
 		if (cycleCounter) ++*cycleCounter;
@@ -1161,6 +1174,7 @@ uint32_t GBAView32(struct ARMCore* cpu, uint32_t address) {
 	struct GBA* gba = (struct GBA*) cpu->master;
 	uint32_t value = 0;
 	address &= ~3;
+	if (gba->memory.gbax && GBAXSaveRegister(address)) return GBAXSaveReadRegister(&gba->memory, address);
 	if (GBAXContains(gba->memory.gbax, address)) {
 		return (uint32_t) GBAXRead(gba->memory.gbax, address, 4);
 	}
