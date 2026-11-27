@@ -16,6 +16,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  savx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test 16 MiB persistent storage format
+        run: |
+          cc -O2 -g -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined -Iinclude src/gba/gbax-savx.c tools/gbax-savx-test.c -o /tmp/gbax-savx-test
+          /tmp/gbax-savx-test
   guest:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -51,7 +59,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
   android:
-    needs: guest
+    needs: [guest, savx]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
