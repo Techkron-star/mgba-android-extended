@@ -269,6 +269,59 @@ M_TEST_DEFINE(gbaxDMA3) {
 	core->deinit(core);
 }
 
+static unsigned _gbaxTurboFrame(struct mCore* core,unsigned mult,bool thumb) {
+	mCoreConfigSetUIntValue(&core->config,"gbax.cpuMultiplier",mult);
+	core->reset(core);
+	/* Pure register loop in IWRAM; avoid idle-loop removal via changing r0. */
+	if(thumb) {
+		core->busWrite16(core,0x03000000,0x3001); /* adds r0,#1 */
+		core->busWrite16(core,0x03000002,0xe7fd); /* b 0x03000000 */
+		assert_true(core->writeRegister(core,"cpsr",0x3f));
+	} else {
+		core->busWrite32(core,0x03000000,0xe2800001); /* add r0,r0,#1 */
+		core->busWrite32(core,0x03000004,0xeafffffd); /* b 0x03000000 */
+	}
+	assert_true(core->writeRegister(core,"r0",0));
+	assert_true(core->writeRegister(core,"pc",0x03000000));
+	core->busWrite16(core,0x04000100,0);
+	core->busWrite16(core,0x04000102,0x80);
+	core->runFrame(core);
+	int32_t counter=0;
+	assert_true(core->readRegister(core,"r0",&counter));
+	assert_true(counter>0);
+	return (unsigned)counter;
+}
+M_TEST_DEFINE(gbaxComputeTurbo) {
+	const char* path=getenv("GBAX_TEST_ROM");
+	if(!path)skip();
+	struct mCore* core=GBACoreCreate();
+	assert_non_null(core);
+	assert_true(core->init(core));
+	mCoreInitConfig(core,NULL);
+	core->opts.useBios=false;core->opts.skipBios=true;
+	struct VFile* rom=VFileOpen(path,O_RDONLY);
+	assert_non_null(rom);
+	assert_true(core->loadROM(core,rom));
+	for(unsigned thumb=0;thumb<2;++thumb) {
+		unsigned one=_gbaxTurboFrame(core,1,thumb);
+		unsigned timer=core->busRead16(core,0x04000100);
+		for(unsigned mult=2;mult<=8;mult*=2) {
+			unsigned fast=_gbaxTurboFrame(core,mult,thumb);
+			unsigned tick=core->busRead16(core,0x04000100);
+			assert_true(fast>one*(mult-1));
+			/* Native timer remains on the master clock, minor event overshoot allowed. */
+			int diff=(int16_t)(tick-timer);
+			assert_true(diff>=-32 && diff<=32);
+		}
+	}
+	/* Invalid config falls back to native. */
+	unsigned standard=_gbaxTurboFrame(core,1,false);
+	assert_int_equal(_gbaxTurboFrame(core,3,false),standard);
+	core->unloadROM(core);
+	mCoreConfigDeinit(&core->config);
+	core->deinit(core);
+}
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
@@ -276,7 +329,8 @@ M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(loadNullROM),
 	cmocka_unit_test(gbaxGuest),
 	cmocka_unit_test(gbaxNamedState),
-	cmocka_unit_test(gbaxDMA3)
+	cmocka_unit_test(gbaxDMA3),
+	cmocka_unit_test(gbaxComputeTurbo)
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	, cmocka_unit_test(gbaxSavxBridge)
 #endif

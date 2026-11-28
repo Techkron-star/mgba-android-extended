@@ -45,6 +45,7 @@ void ARMSetPrivilegeMode(struct ARMCore* cpu, enum PrivilegeMode mode) {
 }
 
 void ARMInit(struct ARMCore* cpu) {
+	ARMSetComputeTurbo(cpu, 1);
 	memset(cpu->cp, 0, sizeof(cpu->cp));
 	cpu->master->init(cpu, cpu->master);
 	size_t i;
@@ -117,6 +118,7 @@ void ARMReset(struct ARMCore* cpu) {
 	cpu->cycles = 0;
 	cpu->nextEvent = 0;
 	cpu->halted = 0;
+	cpu->gbaxFraction = 0;
 
 	cpu->irqh.reset(cpu);
 }
@@ -226,11 +228,62 @@ static inline void ThumbStep(struct ARMCore* cpu) {
 	instruction(cpu, opcode);
 }
 
+/* Phase 6A: accelerate internal instruction cost only, not the bus.
+ * For eligible register-only operations in IWRAM, the native instruction
+ * cost is converted to master ticks with an eighth-cycle accumulator;
+ * there is no external bus access.
+ * ROM/BIOS/EWRAM instruction fetch and memory/MMIO instructions stay native.
+ * No changes to the scheduler, IRQ, timers, PPU, APU or DMA clock. */
+void ARMSetComputeTurbo(struct ARMCore* cpu, unsigned multiplier) {
+	cpu->gbaxTurbo = multiplier==2 || multiplier==4 || multiplier==8 ? multiplier:1;
+	cpu->gbaxFraction=0;
+}
+static bool _gbaxARMCompute(uint32_t op) {
+	/* B/BL; ordinary data processing with Rd != PC; register MUL/MLA. */
+	if ((op&0x0e000000u)==0x0a000000u) return (op>>28)!=15;
+	if ((op&0x0fc000f0u)==0x00000090u)
+		return ((op>>16)&15)!=15 && ((op>>12)&15)!=15 &&
+			((op>>8)&15)!=15 && (op&15)!=15;
+	if ((op&0x0c000000u)!=0 || ((op>>12)&15)==15) return false;
+	unsigned alu=(op>>21)&15;
+	/* Exclude miscellaneous encodings in the test/compare opcode space. */
+	if (alu>=8 && alu<=11 && !(op&(1u<<20))) return false;
+	if (!(op&(1u<<25)) && (op&0x90u)==0x90u) return false;
+	return true;
+}
+static bool _gbaxThumbCompute(uint32_t op) {
+	/* Shifts, add/sub, immediate ALU, low-register ALU, PC/SP arithmetic,
+	 * conditional/unconditional branch, but not SWI, BX, load/store. */
+	return op<0x4000u || (op>=0x4000u && op<0x4400u) ||
+		(op>=0xa000u && op<0xb000u) ||
+		(op>=0xd000u && op<0xde00u) ||
+		(op>=0xe000u && op<0xe800u);
+}
+static inline void _gbaxStep(struct ARMCore* cpu) {
+	const bool thumb=cpu->executionMode==MODE_THUMB;
+	const uint32_t pc=(uint32_t)cpu->gprs[ARM_PC]-(thumb?WORD_SIZE_THUMB:WORD_SIZE_ARM);
+	const uint32_t op=cpu->prefetch[0];
+	const int32_t before=cpu->cycles, event=cpu->nextEvent;
+	/* IWRAM only: external bus timing stays native. */
+	const bool eligible=cpu->gbaxTurbo>1 && !cpu->halted &&
+		(pc>>24)==3 && (thumb?_gbaxThumbCompute(op):_gbaxARMCompute(op));
+	if (thumb) ThumbStep(cpu); else ARMStep(cpu);
+	/* Never undo a timing change or scale a halt/stop transition. */
+	if (!eligible || cpu->halted || cpu->nextEvent!=event ||
+		cpu->cycles<=before || ((uint32_t)cpu->gprs[ARM_PC]>>24)!=3) return;
+	uint64_t delta=(uint32_t)(cpu->cycles-before);
+	uint64_t ticks=delta*(8/cpu->gbaxTurbo)+cpu->gbaxFraction;
+	cpu->cycles=before+(int32_t)(ticks/8);
+	cpu->gbaxFraction=(unsigned)(ticks%8);
+}
+
 void ARMRun(struct ARMCore* cpu) {
 	while (cpu->cycles >= cpu->nextEvent) {
 		cpu->irqh.processEvents(cpu);
 	}
-	if (cpu->executionMode == MODE_THUMB) {
+	if (cpu->gbaxTurbo>1) {
+		_gbaxStep(cpu);
+	} else if (cpu->executionMode == MODE_THUMB) {
 		ThumbStep(cpu);
 	} else {
 		ARMStep(cpu);
@@ -241,7 +294,9 @@ void ARMRun(struct ARMCore* cpu) {
 }
 
 void ARMRunLoop(struct ARMCore* cpu) {
-	if (cpu->executionMode == MODE_THUMB) {
+	if (cpu->gbaxTurbo>1) {
+		while (cpu->cycles < cpu->nextEvent) _gbaxStep(cpu);
+	} else if (cpu->executionMode == MODE_THUMB) {
 		while (cpu->cycles < cpu->nextEvent) {
 			ThumbStep(cpu);
 		}

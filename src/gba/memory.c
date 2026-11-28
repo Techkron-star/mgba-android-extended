@@ -41,6 +41,7 @@ static const char GBA_ROM_WAITSTATES[] = { 4, 3, 2, 8 };
 static const char GBA_ROM_WAITSTATES_SEQ[] = { 2, 1, 4, 1, 8, 1 };
 
 void GBAXDisable(struct GBA* gba) {
+	ARMSetComputeTurbo(gba->cpu,1);
 	GBAXSaveDetach(&gba->memory);
 	GBAXClear(gba->memory.gbax);
 	free(gba->memory.gbax);
