@@ -26,6 +26,7 @@
 #include <mgba/internal/gba/serialize.h>
 #endif
 #include <mgba-util/memory.h>
+#include <mgba-util/crc32.h>
 #include <mgba-util/vfs.h>
 
 #include "libretro_core_options.h"
@@ -377,6 +378,67 @@ static void _reloadSettings(void) {
 /* Separate native Libretro SRAM from the GBAX transactional save namespace.
  * Content CRC is intentionally exact for this ABI revision. Never use ROM
  * paths (which may be virtual or untrusted) as filesystem names. */
+static size_t _rwBudget;
+static unsigned _rwFrames, _rwCommand;
+static uint64_t _rwEpoch;
+static uint32_t _rwSram;
+static bool _rwFenceReady;
+static void _gbaxResetRewind(void) {
+    GBAXRewindClear(); _rwFrames=0; _rwFenceReady=false;
+}
+static unsigned _gbaxRewindCommand(const char* value) {
+    if (!value) return 0;
+    if (!strcmp(value,"step-a")) return 1;
+    if (!strcmp(value,"step-b")) return 2;
+    if (!strcmp(value,"clear-a")) return 3;
+    if (!strcmp(value,"clear-b")) return 4;
+    return 0;
+}
+static unsigned _gbaxReadRewindOptions(void) {
+    struct retro_variable v={.key="mgba_gbax_rewind_budget",.value=NULL};
+    size_t budget=0;
+    if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE,&v) && v.value) {
+        if (!strcmp(v.value,"16")) budget=16u*1024u*1024u;
+        else if (!strcmp(v.value,"32")) budget=32u*1024u*1024u;
+        else if (!strcmp(v.value,"64")) budget=64u*1024u*1024u;
+        else if (!strcmp(v.value,"96")) budget=96u*1024u*1024u;
+    }
+    if (budget!=_rwBudget) { _rwBudget=budget; _gbaxResetRewind(); }
+    v.key="mgba_gbax_rewind_command"; v.value=NULL;
+    unsigned command=0;
+    if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE,&v)) command=_gbaxRewindCommand(v.value);
+    if (command==_rwCommand) return 0;
+    _rwCommand=command;
+    return command;
+}
+static void _gbaxRewindFence(struct GBA* gba) {
+    uint64_t epoch=GBAXSaveEpoch(&gba->memory);
+    uint32_t crc=savedata?doCrc32(savedata,GBA_SIZE_FLASH1M):0;
+    if (!_rwFenceReady || epoch!=_rwEpoch || crc!=_rwSram) {
+        _gbaxResetRewind(); _rwEpoch=epoch; _rwSram=crc; _rwFenceReady=true;
+    }
+}
+static void _gbaxRewindBeforeFrame(void) {
+    if (!GBAXStateActive(core)) return;
+    unsigned command=_gbaxReadRewindOptions();
+    if (!_rwBudget) return;
+    struct GBA* gba=core->board;
+    _gbaxRewindFence(gba);
+    if (command>=3) _gbaxResetRewind();
+    else if (command && GBAXRewindStep(gba)) {
+        _rwFrames=0;
+        _gbaxResetTurbo();
+    }
+}
+static void _gbaxRewindAfterFrame(void) {
+    if (!_rwBudget || !GBAXStateActive(core)) return;
+    struct GBA* gba=core->board;
+    _gbaxRewindFence(gba);
+    if (++_rwFrames>=60) {
+        _rwFrames=0;
+        GBAXRewindCapture(gba,_rwBudget);
+    }
+}
 static void _gbaxAttachLibretroSave(void) {
     if (!GBAXStateActive(core)) return;
     struct GBA* gba = core->board;
@@ -702,6 +764,9 @@ void retro_run(void) {
         if (GBAXTurboPulse(&turboB, b, turboHalfPeriod)) keys |= 2u;
     }
 #endif
+#ifdef M_CORE_GBA
+    _gbaxRewindBeforeFrame();
+#endif
 	core->setKeys(core, keys);
 
 	if (!luxSensorUsed) {
@@ -727,6 +792,9 @@ void retro_run(void) {
 	}
 
 	core->runFrame(core);
+#ifdef M_CORE_GBA
+    _gbaxRewindAfterFrame();
+#endif
 	unsigned width, height;
 	core->currentVideoSize(core, &width, &height);
 	videoCallback(outputBuffer, width, height, BYTES_PER_PIXEL * 256);
@@ -952,6 +1020,7 @@ static void _setupMaps(struct mCore* core) {
 
 void retro_reset(void) {
 #ifdef M_CORE_GBA
+    _gbaxResetRewind();
     _gbaxResetTurbo();
 #endif
 	core->reset(core);
@@ -1116,6 +1185,9 @@ bool retro_load_game(const struct retro_game_info* game) {
 }
 
 void retro_unload_game(void) {
+#ifdef M_CORE_GBA
+    _gbaxResetRewind(); _rwBudget=0; _rwCommand=0;
+#endif
 	if (!core) {
 		return;
 	}
@@ -1167,7 +1239,7 @@ bool retro_unserialize(const void* data, size_t size) {
 		_doDeferredSetup();
 	}
 #ifdef M_CORE_GBA
-    if (GBAXStateActive(core)) return _gbaxRetroLoad(data,size);
+    if (GBAXStateActive(core)) { _gbaxResetRewind(); return _gbaxRetroLoad(data,size); }
 #endif
 	struct VFile* vfm = VFileFromConstMemory(data, size);
 	bool success = mCoreLoadStateNamed(core, vfm, SAVESTATE_RTC);
@@ -1176,10 +1248,16 @@ bool retro_unserialize(const void* data, size_t size) {
 }
 
 void retro_cheat_reset(void) {
+#ifdef M_CORE_GBA
+    _gbaxResetRewind();
+#endif
 	mCheatDeviceClear(core->cheatDevice(core));
 }
 
 void retro_cheat_set(unsigned index, bool enabled, const char* code) {
+#ifdef M_CORE_GBA
+    _gbaxResetRewind();
+#endif
 	UNUSED(index);
 	UNUSED(enabled);
 	struct mCheatDevice* device = core->cheatDevice(core);

@@ -20,6 +20,7 @@ struct GBAXSaveSession;
 bool GBAXSaveAttach(struct GBAMemory*, struct VFile*, struct VFile*, uint32_t romId);
 void GBAXSaveDetach(struct GBAMemory*);
 void GBAXSaveReset(struct GBAMemory*);
+uint64_t GBAXSaveEpoch(const struct GBAMemory*);
 static inline bool GBAXSaveRegister(uint32_t address) {
     return address - GBAX_SAVX_MMIO <= 0x10u && !(address & 3u);
 }
