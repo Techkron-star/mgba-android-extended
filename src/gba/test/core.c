@@ -322,6 +322,68 @@ M_TEST_DEFINE(gbaxComputeTurbo) {
 	core->deinit(core);
 }
 
+M_TEST_DEFINE(gbaxROM128) {
+	const char* path=getenv("GBAX_ROM128_TEST");
+	if(!path)skip();
+	struct mCore* core=GBACoreCreate();
+	assert_non_null(core);
+	assert_true(core->init(core));
+	mCoreInitConfig(core,NULL);
+	core->opts.useBios=false;core->opts.skipBios=true;
+	struct VFile* rom=VFileOpen(path,O_RDONLY);
+	assert_non_null(rom);
+	assert_true(core->loadROM(core,rom));
+	core->reset(core);
+	assert_int_equal(core->romSize(core),0x08000000);
+	assert_int_equal(core->busRead32(core,0x49fffffc),0x11223344);
+	assert_int_equal(core->busRead32(core,0x4a000000),0x55667788);
+	assert_int_equal(core->busRead32(core,0x4c000000),0x99aabbcc);
+	assert_int_equal(core->busRead32(core,0x4e000000),0xdeadbeef);
+	assert_int_equal(core->busRead32(core,0x4ffffffc),0x12345678);
+	assert_int_equal(core->busRead32(core,0x09fffffc),0x11223344);
+	assert_int_equal(core->busRead8(core,0x4a000001),0x77);
+	assert_int_equal(core->busRead16(core,0x4a000002),0x5566);
+	assert_int_equal(core->rawRead32(core,0x4ffffffc,-1),0x12345678);
+	core->busWrite32(core,0x4ffffffc,0);
+	core->rawWrite32(core,0x4ffffffc,-1,0);
+	assert_int_equal(core->busRead32(core,0x4ffffffc),0x12345678);
+	core->busWrite32(core,0x03000000,0xeafffffe);
+	assert_true(core->writeRegister(core,"pc",0x03000000));
+	_gbaxDMA3(core,0x49fffffc,0x40000000,2,0x8400);
+	for(unsigned i=0;i<512;++i)core->step(core);
+	assert_int_equal(core->busRead32(core,0x40000000),0x11223344);
+	assert_int_equal(core->busRead32(core,0x40000004),0x55667788);
+	_gbaxDMA3(core,0x40000000,0x4ffffffc,1,0x8400);
+	assert_int_equal(core->busRead16(core,0x040000de)&0x8000,0);
+	uint32_t crc=0;
+	core->checksum(core,&crc,mCHECKSUM_CRC32);
+	core->reset(core);
+	assert_int_equal(core->busRead32(core,0x4ffffffc),0x12345678);
+	struct VFile* snapshot=VFileMemChunk(NULL,0);
+	assert_non_null(snapshot);
+	assert_true(mCoreSaveStateNamed(core,snapshot,0));
+	core->unloadROM(core);
+	/* Same first 32 MiB, different final byte: distinct full-file identity. */
+	rom=VFileOpen(path,O_RDWR);
+	assert_non_null(rom);
+	assert_int_equal(rom->seek(rom,0x07ffffff,SEEK_SET),0x07ffffff);
+	uint8_t changed=0x42;
+	assert_int_equal(rom->write(rom,&changed,1),1);
+	rom->close(rom);
+	rom=VFileOpen(path,O_RDONLY);
+	assert_non_null(rom);
+	assert_true(core->loadROM(core,rom));
+	core->reset(core);
+	uint32_t other=0;
+	core->checksum(core,&other,mCHECKSUM_CRC32);
+	assert_true(crc!=other);
+	assert_false(mCoreLoadStateNamed(core,snapshot,0));
+	snapshot->close(snapshot);
+	core->unloadROM(core);
+	mCoreConfigDeinit(&core->config);
+	core->deinit(core);
+}
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
@@ -330,7 +392,8 @@ M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(gbaxGuest),
 	cmocka_unit_test(gbaxNamedState),
 	cmocka_unit_test(gbaxDMA3),
-	cmocka_unit_test(gbaxComputeTurbo)
+	cmocka_unit_test(gbaxComputeTurbo),
+	cmocka_unit_test(gbaxROM128)
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	, cmocka_unit_test(gbaxSavxBridge)
 #endif

@@ -55,13 +55,14 @@ void GBADMAReset(struct GBA* gba) {
 static bool _gbaxDMAAddress(const struct GBAMemory* m,int dma,uint32_t address) {
 	return dma==3 && GBAXContains(m->gbax,address);
 }
-static bool _gbaxDMAEndpoint(uint32_t address,unsigned width,int offset,uint32_t count) {
+static bool _gbaxDMAEndpoint(const struct GBAMemory* m,bool source,uint32_t address,unsigned width,int offset,uint32_t count) {
 	if(!count || (width!=2 && width!=4))return false;
 	int64_t first=(int64_t)(address & ~(uint32_t)(width-1));
 	int64_t last=first+(int64_t)offset*(count-1);
 	int64_t low=first<last?first:last;
 	int64_t high=first>last?first:last;
-	return low>=GBAX_RAM_BASE && high+width<=(int64_t)GBAX_RAM_BASE+GBAX_RAM_SIZE;
+	return (low>=GBAX_RAM_BASE && high+width<=(int64_t)GBAX_RAM_BASE+GBAX_RAM_SIZE) ||
+		(source && m->gbaxRomTail && low>=GBAX_ROM_BASE && high+width<=(int64_t)GBAX_ROM_BASE+m->gbaxRomSize);
 }
 static bool _isValidDMASAD(int dma, uint32_t address) {
 	if (dma == 0 && address >= GBA_BASE_ROM0 && address < GBA_BASE_SRAM) {
@@ -144,9 +145,9 @@ uint16_t GBADMAWriteCNT_HI(struct GBA* gba, int dma, uint16_t control) {
 			/* This first extension is bounded, immediate-only. Ordinary
 			 * hardware addresses remain usable on the opposite endpoint. */
 			bool srcOK=currentDma->source<0x10000000u ||
-				_gbaxDMAEndpoint(currentDma->source,width,currentDma->sourceOffset,currentDma->count);
+				_gbaxDMAEndpoint(memory,true,currentDma->source,width,currentDma->sourceOffset,currentDma->count);
 			bool dstOK=currentDma->dest<0x10000000u ||
-				_gbaxDMAEndpoint(currentDma->dest,width,currentDma->destOffset,currentDma->count);
+				_gbaxDMAEndpoint(memory,false,currentDma->dest,width,currentDma->destOffset,currentDma->count);
 			if (!srcOK || !dstOK || GBADMARegisterGetTiming(currentDma->reg)!=GBA_DMA_TIMING_NOW ||
 				GBADMARegisterIsRepeat(currentDma->reg) || GBADMARegisterGetSrcControl(currentDma->reg)==3) {
 				mLOG(GBA_DMA, WARN, "Rejected unsupported GBAX DMA3 transfer");
