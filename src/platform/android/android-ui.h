@@ -21,6 +21,8 @@ char* mAndroidPickRom(void);
 // touches), and draw after the frame blit. `view` is the letterboxed game rect.
 void mAndroidOverlaySetWindow(SDL_Window* window);
 void mAndroidOverlaySetRomLoaded(bool loaded);
+void mAndroidOverlaySetCpuMultiplier(unsigned multiplier);
+unsigned mAndroidChooseCpuMultiplier(unsigned current);
 void mAndroidOverlayReset(void);
 void mAndroidOverlayHandleEvent(const SDL_Event* event);
 void mAndroidOverlayDraw(SDL_Renderer* renderer, const SDL_Rect* view);

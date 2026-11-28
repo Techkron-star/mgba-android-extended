@@ -46,6 +46,24 @@ static struct mAndroidLinkCable* sLinkCable;
 
 static int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args);
 
+static unsigned mAndroidCpuPreference(struct mCore* core) {
+	unsigned multiplier=1;
+	mCoreConfigGetUIntValue(&core->config,"gbax.cpuMultiplier",&multiplier);
+	return multiplier==2 || multiplier==4 || multiplier==8 ? multiplier:1;
+}
+
+static void mAndroidSelectCpu(struct mCore* core) {
+	unsigned previous=mAndroidCpuPreference(core);
+	unsigned selected=mAndroidChooseCpuMultiplier(previous);
+	if(selected==previous)return;
+	mCoreConfigSetUIntValue(&core->config,"gbax.cpuMultiplier",selected);
+	mAndroidOverlaySetCpuMultiplier(selected);
+	if(!mCoreConfigSave(&core->config)) {
+		SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,"GBAX CPU preference could not be saved");
+		SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING,"GBAX CPU profile","Selection applies to this session, but could not be saved for future sessions.",NULL);
+	}
+}
+
 static void mAndroidPublicSaveDir(char* out, size_t outSize) {
 	const char* external = getenv("EXTERNAL_STORAGE");
 	if (!external || !external[0])
@@ -1302,6 +1320,7 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 	mAndroidOverlaySetWindow(renderer.window);
+	mAndroidOverlaySetCpuMultiplier(mAndroidCpuPreference(renderer.core));
 
 	renderer.player.bindings = &renderer.core->inputMap;
 	mSDLInitBindingsGBA(&renderer.core->inputMap);
@@ -1381,6 +1400,10 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 			if (event.type == SDL_QUIT) {
 				return 0;
 			}
+			if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F15 && !event.key.repeat) {
+				mAndroidSelectCpu(renderer->core);
+				continue;
+			}
 			if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F14) {
 				args->fname = mAndroidPickRom();
 				if (args->fname) break;
@@ -1427,7 +1450,11 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 			while (SDL_PollEvent(&event)) {
 				mAndroidOverlayHandleEvent(&event);
 				if (event.type == SDL_QUIT) return 0;
-				if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F14) {
+				if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F15 && !event.key.repeat) {
+				mAndroidSelectCpu(renderer->core);
+				continue;
+			}
+			if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F14) {
 					args->fname = mAndroidPickRom();
 					if (args->fname) break;
 				}

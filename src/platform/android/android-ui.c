@@ -273,6 +273,7 @@ static struct {
     bool hasLastView;
     bool touchesInitialized;
     bool romLoaded;
+    unsigned cpuMultiplier;
 } overlay;
 
 static struct {
@@ -336,6 +337,37 @@ int mAndroidOverlayTopInset(int w, int h) {
 	return topY + unit + gap + unit / 2;
 }
 
+void mAndroidOverlaySetCpuMultiplier(unsigned multiplier) {
+	overlay.cpuMultiplier = multiplier == 2 || multiplier == 4 || multiplier == 8 ? multiplier : 1;
+}
+
+/* SDL's Android message box delegates to the platform dialog. Cancel and
+ * errors preserve the previous preference. No core reset is triggered. */
+unsigned mAndroidChooseCpuMultiplier(unsigned current) {
+	const SDL_MessageBoxButtonData buttons[] = {
+		{current == 1 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, 1, "Original - 1x"},
+		{current == 2 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, 2, "Enhanced - 2x"},
+		{current == 4 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, 4, "Turbo - 4x"},
+		{current == 8 ? SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT : 0, 8, "Extreme - 8x"},
+		{SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+	};
+	const SDL_MessageBoxData box = {
+		.flags = SDL_MESSAGEBOX_INFORMATION,
+		.window = overlay.window,
+		.title = "GBAX CPU profile",
+		.message = "Applies when a GBAX ROM starts. Compute-only acceleration in IWRAM; normal games remain at 1x. Extreme may reduce real-time performance on slower phones.",
+		.numbuttons = (int)(sizeof(buttons)/sizeof(buttons[0])),
+		.buttons = buttons,
+		.colorScheme = NULL
+	};
+	int chosen = 0;
+	if(SDL_ShowMessageBox(&box, &chosen) < 0) {
+		SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "GBAX CPU selector: %s", SDL_GetError());
+		return current;
+	}
+	return chosen == 1 || chosen == 2 || chosen == 4 || chosen == 8 ? (unsigned)chosen : current;
+}
+
 static int _layout(const SDL_Rect* view, struct OverlayButton* out, SDL_Rect* stick, int* stickRadius) {
 	int w, h;
 	if (!overlay.window) return 0;
@@ -344,6 +376,28 @@ static int _layout(const SDL_Rect* view, struct OverlayButton* out, SDL_Rect* st
 	bool landscape = w >= h;
 	int unit = _unit(w, h);
 	int n = 0;
+	if (!overlay.romLoaded) {
+		/* Dedicated launch screen: don't crowd interactive settings with
+		 * game controls that have no meaning before loading a ROM. */
+		*stick=(SDL_Rect){0,0,0,0};
+		*stickRadius=0;
+		int buttonW=unit*3;
+		if(buttonW>w-20)buttonW=w-20;
+		int buttonH=unit*3/4;
+		if(buttonH>h/5)buttonH=h/5;
+		int gap=buttonH/4;
+		int y=(h-3*buttonH-2*gap)/2;
+		const char* label="CPU 1X";
+		switch(overlay.cpuMultiplier) {
+		case 2: label="CPU 2X"; break;
+		case 4: label="CPU 4X"; break;
+		case 8: label="CPU 8X"; break;
+		}
+		out[n++]=(struct OverlayButton){{(w-buttonW)/2,y,buttonW,buttonH},SDLK_F14,"LOAD ROM",false};
+		out[n++]=(struct OverlayButton){{(w-buttonW)/2,y+buttonH+gap,buttonW,buttonH},SDLK_F15,label,false};
+		out[n++]=(struct OverlayButton){{(w-buttonW)/2,y+2*(buttonH+gap),buttonW,buttonH},SDLK_F13,"LINK",false};
+		return n;
+	}
 	/* Thumbstick size/placement match 65c184f80; face buttons keep the 1.4x unit. */
 	int stickUnit = (landscape ? h : w) / 8;
 	if (stickUnit < 42) stickUnit = 42;
@@ -493,7 +547,7 @@ void mAndroidOverlayHandleEvent(const SDL_Event* event) {
 		int stickRadius = 0;
 		int n = _layout(overlay.hasLastView ? &overlay.lastView : NULL, buttons, &stick, &stickRadius);
 		int dx = x - (stick.x + stickRadius), dy = y - (stick.y + stickRadius);
-		if (dx * dx + dy * dy <= stickRadius * stickRadius) {
+		if (stickRadius > 0 && dx * dx + dy * dy <= stickRadius * stickRadius) {
 			int slot;
 			for (slot = 0; slot < MAX_TOUCHES && overlay.touches[slot].id != -1; ++slot) {}
 			if (slot < MAX_TOUCHES) {
@@ -513,6 +567,7 @@ void mAndroidOverlayHandleEvent(const SDL_Event* event) {
 		for (i = 0; i < n; ++i) {
 			if (x >= buttons[i].rect.x && x < buttons[i].rect.x + buttons[i].rect.w && y >= buttons[i].rect.y && y < buttons[i].rect.y + buttons[i].rect.h) {
 				if (buttons[i].key == SDLK_F13) { mAndroidPeerJniShowDialog(); return; }
+				if (buttons[i].key == SDLK_F15) { _pushKey(SDLK_F15,true); _pushKey(SDLK_F15,false); return; }
 				int slot;
 				for (slot = 0; slot < MAX_TOUCHES && overlay.touches[slot].id != -1; ++slot) {}
 				if (slot < MAX_TOUCHES) {
@@ -598,6 +653,7 @@ void mAndroidOverlayDraw(SDL_Renderer* renderer, const SDL_Rect* view) {
 	SDL_Rect stick; int stickRadius = 0;
 	int n = _layout(view, buttons, &stick, &stickRadius);
 	int cx = stick.x + stickRadius, cy = stick.y + stickRadius;
+	if (stickRadius > 0) {
 	SDL_SetRenderDrawColor(renderer, 30, 35, 45, 105);
 	_fillCircle(renderer, cx, cy, stickRadius);
 	SDL_SetRenderDrawColor(renderer, 235, 240, 250, 190);
@@ -605,6 +661,7 @@ void mAndroidOverlayDraw(SDL_Renderer* renderer, const SDL_Rect* view) {
 	_drawCircle(renderer, cx, cy, stickRadius * 2 / 3);
 	SDL_RenderDrawLine(renderer, cx - stickRadius / 2, cy, cx + stickRadius / 2, cy);
 	SDL_RenderDrawLine(renderer, cx, cy - stickRadius / 2, cx, cy + stickRadius / 2);
+	}
 	SDL_SetRenderDrawColor(renderer, 235, 235, 235, 125);
 	int i;
 	for (i = 0; i < n; ++i) {
@@ -639,7 +696,7 @@ void mAndroidOverlayDraw(SDL_Renderer* renderer, const SDL_Rect* view) {
 		int ty = buttons[i].rect.y + (buttons[i].rect.h - 16) / 2;
 		_blitText(surf, buttons[i].label, tx, ty, 2, white);
 	}
-	_blitText(surf, "4-WAY", cx - 20, cy - 8, 1, white);
+	if (stickRadius > 0) _blitText(surf, "4-WAY", cx - 20, cy - 8, 1, white);
 	if (SDL_UpdateTexture(overlayCache.texture, NULL, surf->pixels, surf->pitch) < 0) { SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Touch overlay texture update failed: %s", SDL_GetError()); _freeOverlayCache(); return; }
 	if (SDL_RenderCopy(renderer, overlayCache.texture, NULL, NULL) < 0) SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Touch overlay draw failed: %s", SDL_GetError());
 }
