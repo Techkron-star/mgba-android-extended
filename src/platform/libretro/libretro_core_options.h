@@ -267,6 +267,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "OFF"
    },
    {
+      "mgba_gbax_turbo_rate",
+      "GBA Turbo Input Rate",
+      NULL,
+      "Rapid-fire X/Y map to A/B. Pulses are measured in emulated frames; effective real-time rate scales with fast-forward.",
+      NULL,
+      "input",
+      {
+         { "5", NULL },
+         { "10", NULL },
+         { "15", NULL },
+         { "30", NULL },
+         { NULL, NULL },
+      },
+      "15"
+   },
+   {
       "mgba_gbax_cpu",
       "GBAX Compute Turbo (Restart)",
       NULL,

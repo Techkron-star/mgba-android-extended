@@ -29,6 +29,7 @@
 #include <mgba-util/vfs.h>
 
 #include "libretro_core_options.h"
+#include "gbax-turbo-input.h"
 
 #define GB_SAMPLES 512
 /* An alpha factor of 1/180 is *somewhat* equivalent
@@ -68,6 +69,25 @@ static int32_t _readTiltY(struct mRotationSource* source);
 static int32_t _readGyroZ(struct mRotationSource* source);
 
 static struct mCore* core;
+#ifdef M_CORE_GBA
+static struct GBAXTurboInput turboA, turboB;
+static unsigned turboHalfPeriod = 2;
+static void _gbaxResetTurbo(void) {
+    turboA = (struct GBAXTurboInput){0};
+    turboB = (struct GBAXTurboInput){0};
+}
+static void _gbaxReadTurboRate(void) {
+    struct retro_variable var = { .key = "mgba_gbax_turbo_rate", .value = NULL };
+    unsigned half = 2;
+    if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        if (!strcmp(var.value, "5")) half = 6;
+        else if (!strcmp(var.value, "10")) half = 3;
+        else if (!strcmp(var.value, "30")) half = 1;
+    }
+    if (turboHalfPeriod != half) _gbaxResetTurbo();
+    turboHalfPeriod = half;
+}
+#endif
 static mColor* outputBuffer = NULL;
 static int16_t *audioSampleBuffer = NULL;
 static size_t audioSampleBufferSize;
@@ -503,6 +523,10 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 }
 
 void retro_init(void) {
+#ifdef M_CORE_GBA
+    _gbaxResetTurbo();
+    turboHalfPeriod = 2;
+#endif
 	enum retro_pixel_format fmt;
 #ifdef COLOR_16_BIT
 #ifdef COLOR_5_6_5
@@ -638,6 +662,9 @@ void retro_run(void) {
 			core->reloadConfigOption(core, "allowOpposingDirections", NULL);
 		}
 
+#ifdef M_CORE_GBA
+        _gbaxReadTurboRate();
+#endif
 		_loadAudioLowPassFilterSettings();
 		var.key = "mgba_frameskip";
 		var.value = 0;
@@ -653,8 +680,9 @@ void retro_run(void) {
 
 	keys = 0;
 	unsigned i;
+    uint16_t joypadMask = 0;
 	if (useBitmasks) {
-		int16_t joypadMask = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
+		joypadMask = (uint16_t)inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
 		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {
 			keys |= ((joypadMask >> keymap[i]) & 1) << i;
 		}
@@ -663,6 +691,17 @@ void retro_run(void) {
 			keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, keymap[i])) << i;
 		}
 	}
+#ifdef M_CORE_GBA
+    if (core->platform(core) == mPLATFORM_GBA) {
+        bool a = useBitmasks ? (joypadMask & (1u << RETRO_DEVICE_ID_JOYPAD_X)) != 0
+            : !!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X);
+        bool b = useBitmasks ? (joypadMask & (1u << RETRO_DEVICE_ID_JOYPAD_Y)) != 0
+            : !!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y);
+        /* keymap[0] = GBA A, keymap[1] = GBA B. Never suppress normal A/B. */
+        if (GBAXTurboPulse(&turboA, a, turboHalfPeriod)) keys |= 1u;
+        if (GBAXTurboPulse(&turboB, b, turboHalfPeriod)) keys |= 2u;
+    }
+#endif
 	core->setKeys(core, keys);
 
 	if (!luxSensorUsed) {
@@ -912,6 +951,9 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
+#ifdef M_CORE_GBA
+    _gbaxResetTurbo();
+#endif
 	core->reset(core);
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
@@ -1063,6 +1105,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 #endif
 
+#ifdef M_CORE_GBA
+    _gbaxResetTurbo();
+    _gbaxReadTurboRate();
+#endif
 	core->reset(core);
 	_setupMaps(core);
 

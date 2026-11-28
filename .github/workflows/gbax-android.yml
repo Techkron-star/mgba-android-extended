@@ -75,6 +75,10 @@ jobs:
         run: |
           cmake -S . -B build-libretro -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DDISABLE_DEPS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build-libretro --target mgba_libretro -j2
+      - name: Test independent GBA turbo input pulses
+        run: |
+          cc -std=c99 -Wall -Wextra -Werror -I src/platform/libretro tools/gbax-turbo-input-test.c -o /tmp/gbax-turbo-input-test
+          /tmp/gbax-turbo-input-test
       - name: Execute Libretro SDK persistence and state envelope test
         run: |
           LIB="$(find build-libretro -name mgba_libretro.so -print -quit)"
