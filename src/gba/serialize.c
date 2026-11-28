@@ -307,6 +307,9 @@ bool GBAXStateSave(struct GBA* gba,struct VFile* f) {
 	struct GBASerializedState* native=calloc(1,sizeof(*native));
 	if(!native)return false;
 	_GBASerializeNative(gba,native);
+	STORE_32(0x58544350u,0,native->reserved);
+	STORE_32(gba->cpu->gbaxTurbo,4,native->reserved);
+	STORE_32(gba->cpu->gbaxFraction,8,native->reserved);
 	uint8_t head[GBAX_STATE_HEADER]={0};
 	uint8_t invalid[GBAX_STATE_HEADER]={0};
 	uint32_t count=0;
@@ -354,8 +357,9 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 	struct GBAXMemory* next=calloc(1,sizeof(*next));
 	bool ok=native && next && _xsRead(f,native,sizeof(*native)) &&
 		doCrc32(native,sizeof(*native))==_xsGet(head+28);
+	unsigned turbo=1, fraction=0;
 	if(ok) {
-		uint32_t pc, rom, version, bios;
+		uint32_t pc, rom, version, bios, tag;
 		LOAD_32(pc,ARM_PC*sizeof(native->cpu.gprs[0]),native->cpu.gprs);
 		LOAD_32(rom,0,&native->romCrc32);
 		LOAD_32(version,0,&native->versionMagic);
@@ -366,6 +370,13 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 		ok=rom==gba->romCrc32 && version==GBASavestateMagic+GBASavestateVersion &&
 			bios==gba->biosChecksum && !(pc&1) &&
 			(region==0 || region==2 || region==3 || (region>=8 && region<=13));
+		LOAD_32(tag,0,native->reserved);
+		if(tag==0x58544350u) {
+			LOAD_32(turbo,4,native->reserved);
+			LOAD_32(fraction,8,native->reserved);
+			ok=ok && (turbo==1 || turbo==2 || turbo==4 || turbo==8) && fraction<8 &&
+				(turbo!=1 || fraction==0);
+		} else if(tag!=0) ok=false;
 	}
 	for(unsigned i=0;ok && i<GBAX_PAGE_COUNT;++i) {
 		if(!(head[36+i/8]&(1u<<(i%8))))continue;
@@ -381,6 +392,8 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 		struct GBAXMemory* old=gba->memory.gbax;
 		gba->memory.gbax=next;
 		next=old;
+		ARMSetComputeTurbo(gba->cpu,turbo);
+		gba->cpu->gbaxFraction=fraction;
 		/* Never roll back persistent storage. LOAD is required before COMMIT. */
 		GBAXSaveReset(&gba->memory);
 	}

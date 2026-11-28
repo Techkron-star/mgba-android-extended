@@ -387,6 +387,7 @@ static void _GBACoreLoadConfig(struct mCore* core, const struct mCoreConfig* con
 
 	mCoreConfigCopyValue(&core->config, config, "allowOpposingDirections");
 	mCoreConfigCopyValue(&core->config, config, "gba.bios");
+	mCoreConfigCopyValue(&core->config, config, "gbax.cpuMultiplier");
 	mCoreConfigCopyValue(&core->config, config, "gba.forceGbp");
 	mCoreConfigCopyValue(&core->config, config, "vbaBugCompat");
 
@@ -861,6 +862,9 @@ static void _GBACoreReset(struct mCore* core) {
 	}
 #endif
 
+	unsigned turbo=1;
+	if (gba->memory.gbax) mCoreConfigGetUIntValue(&core->config,"gbax.cpuMultiplier",&turbo);
+	ARMSetComputeTurbo(core->cpu,turbo);
 	ARMReset(core->cpu);
 	bool forceSkip = gba->mbVf || (core->opts.skipBios && (gba->romVf || gba->memory.rom));
 	if (!forceSkip && (gba->romVf || gba->memory.rom) && gba->pristineRomSize >= 0xA0 && gba->biosVf) {

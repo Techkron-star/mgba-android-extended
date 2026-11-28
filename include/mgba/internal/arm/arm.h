@@ -174,6 +174,8 @@ struct ARMCore {
 	int32_t cycles;
 	int32_t nextEvent;
 	int halted;
+	unsigned gbaxTurbo; /* 0/1 = native; 2/4/8 = experimental compute turbo */
+	unsigned gbaxFraction; /* eighths of a native master cycle */
 
 	int32_t bankedRegisters[6][7];
 	int32_t bankedSPSRs[6];
@@ -203,6 +205,7 @@ void ARMHotplugAttach(struct ARMCore* cpu, size_t slot);
 void ARMHotplugDetach(struct ARMCore* cpu, size_t slot);
 
 void ARMReset(struct ARMCore* cpu);
+void ARMSetComputeTurbo(struct ARMCore* cpu, unsigned multiplier);
 void ARMSetPrivilegeMode(struct ARMCore*, enum PrivilegeMode);
 void ARMRaiseIRQ(struct ARMCore*);
 void ARMRaiseSWI(struct ARMCore*);
