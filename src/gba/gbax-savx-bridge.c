@@ -10,6 +10,7 @@ struct GBAXSaveSession {
     struct VFile* file[2];
     struct GBAXSaveIO io[2];
     uint64_t generation;
+    uint64_t epoch;
     uint32_t romId;
     uint32_t status;
     bool loaded;
@@ -70,9 +71,13 @@ bool GBAXSaveAttach(struct GBAMemory* m,struct VFile* a,struct VFile* b,uint32_t
 }
 void GBAXSaveReset(struct GBAMemory* m) {
     if(!m->savx)return;
+    ++m->savx->epoch;
     m->savx->loaded=false;
     m->savx->generation=0;
     m->savx->status=GBAX_SAVX_READY;
+}
+uint64_t GBAXSaveEpoch(const struct GBAMemory* m) {
+    return m->savx ? m->savx->epoch : 0;
 }
 /* All-or-nothing replacement of the staging pages. Zero pages need no allocation. */
 static bool replaceStage(struct GBAXMemory* ram,const uint8_t* p) {
@@ -118,6 +123,7 @@ uint32_t GBAXSaveReadRegister(const struct GBAMemory* m,uint32_t address) {
 void GBAXSaveWriteRegister(struct GBAMemory* m,uint32_t address,uint32_t value) {
     struct GBAXSaveSession* s=m->savx;
     if(!s || !m->gbax || address!=GBAX_SAVX_MMIO+8) return;
+    ++s->epoch; /* Includes failed/uncertain commands: never cross an I/O boundary. */
     if(value!=GBAX_SAVX_CMD_LOAD && value!=GBAX_SAVX_CMD_COMMIT) {
         s->status=GBAX_SAVX_ERROR_BASE+GBAX_SAVE_INVALID;
         return;

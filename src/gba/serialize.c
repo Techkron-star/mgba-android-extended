@@ -401,3 +401,119 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 	free(next); free(native);
 	return ok;
 }
+
+/* Native rewind, bounded immutable pages shared between adjacent snapshots.
+ * Only the Libretro emulation thread uses this history. No disk writes,
+ * no 64 MiB Java envelopes and no persistent SAVX session rollback. */
+#define GBAX_REWIND_LIMIT 60u
+struct GBAXRewindPage {
+    unsigned refs;
+    uint8_t data[GBAX_PAGE_SIZE];
+};
+struct GBAXRewindSnapshot {
+    struct GBASerializedState native;
+    struct GBAXRewindPage* pages[GBAX_PAGE_COUNT];
+    uint64_t saveEpoch;
+    uint32_t rom;
+    unsigned turbo, fraction;
+};
+static struct GBAXRewindSnapshot* _rwHistory[GBAX_REWIND_LIMIT];
+static size_t _rwCount, _rwBytes;
+
+static void _rwFree(struct GBAXRewindSnapshot* s) {
+    if (!s) return;
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+        struct GBAXRewindPage* p=s->pages[i];
+        if (p && !--p->refs) { _rwBytes-=sizeof(*p); free(p); }
+    }
+    _rwBytes-=sizeof(*s);
+    free(s);
+}
+static void _rwEvict(void) {
+    if (!_rwCount) return;
+    _rwFree(_rwHistory[0]);
+    --_rwCount;
+    memmove(_rwHistory,_rwHistory+1,_rwCount*sizeof(*_rwHistory));
+    _rwHistory[_rwCount]=NULL;
+}
+void GBAXRewindClear(void) {
+    while (_rwCount) _rwEvict();
+}
+size_t GBAXRewindCount(void) { return _rwCount; }
+void GBAXRewindCapture(struct GBA* gba,size_t budget) {
+    if (!gba || !gba->memory.gbax || budget<sizeof(struct GBAXRewindSnapshot)) {
+        GBAXRewindClear(); return;
+    }
+    uint64_t epoch=GBAXSaveEpoch(&gba->memory);
+    if (_rwCount && (_rwHistory[_rwCount-1]->rom!=gba->romCrc32 ||
+            _rwHistory[_rwCount-1]->saveEpoch!=epoch)) GBAXRewindClear();
+    /* Keep the newest snapshot alive while comparing pages. If necessary
+     * abandon sharing and restart with a fresh baseline. */
+    while (_rwCount>1 && (_rwBytes+sizeof(struct GBAXRewindSnapshot)>budget || _rwCount>=GBAX_REWIND_LIMIT)) _rwEvict();
+    if (_rwBytes+sizeof(struct GBAXRewindSnapshot)>budget) GBAXRewindClear();
+    struct GBAXRewindSnapshot* prev=_rwCount?_rwHistory[_rwCount-1]:NULL;
+    struct GBAXRewindSnapshot* s=calloc(1,sizeof(*s));
+    if (!s) { GBAXRewindClear(); return; }
+    _rwBytes+=sizeof(*s);
+    s->saveEpoch=epoch; s->rom=gba->romCrc32;
+    s->turbo=gba->cpu->gbaxTurbo; s->fraction=gba->cpu->gbaxFraction;
+    _GBASerializeNative(gba,&s->native);
+    /* First retain every unchanged page before any history eviction. */
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+        const uint8_t* live=gba->memory.gbax->pages[i];
+        struct GBAXRewindPage* old=prev?prev->pages[i]:NULL;
+        if (live && old && !memcmp(live,old->data,GBAX_PAGE_SIZE)) {
+            ++old->refs; s->pages[i]=old;
+        }
+    }
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+        const uint8_t* live=gba->memory.gbax->pages[i];
+        if (s->pages[i] || !_xsNonzero(live)) continue;
+        while (_rwCount && _rwBytes+sizeof(struct GBAXRewindPage)>budget) _rwEvict();
+        if (_rwBytes+sizeof(struct GBAXRewindPage)>budget) { _rwFree(s); GBAXRewindClear(); return; }
+        struct GBAXRewindPage* p=malloc(sizeof(*p));
+        if (!p) { _rwFree(s); GBAXRewindClear(); return; }
+        p->refs=1; memcpy(p->data,live,GBAX_PAGE_SIZE);
+        s->pages[i]=p; _rwBytes+=sizeof(*p);
+    }
+    while (_rwCount>=GBAX_REWIND_LIMIT) _rwEvict();
+    _rwHistory[_rwCount++]=s;
+}
+bool GBAXRewindStep(struct GBA* gba) {
+    if (!gba || !gba->memory.gbax || !_rwCount) return false;
+    struct GBAXRewindSnapshot* s=_rwHistory[_rwCount-1];
+    if (s->rom!=gba->romCrc32 || s->saveEpoch!=GBAXSaveEpoch(&gba->memory)) {
+        GBAXRewindClear(); return false;
+    }
+    /* Allocate only newly needed live pages, never a second full RAM copy.
+     * Preflight all allocations before changing CPU or RAM. */
+    struct GBAXMemory* ram=gba->memory.gbax;
+    uint8_t* created[GBAX_PAGE_COUNT]={0};
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+        if (s->pages[i] && !ram->pages[i]) {
+            created[i]=malloc(GBAX_PAGE_SIZE);
+            if (!created[i]) {
+                for (unsigned j=0;j<GBAX_PAGE_COUNT;++j) free(created[j]);
+                GBAXRewindClear(); return false;
+            }
+        }
+    }
+    if (!_GBADeserializeNative(gba,&s->native)) {
+        for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) free(created[i]);
+        GBAXRewindClear(); return false;
+    }
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
+        if (!s->pages[i]) {
+            if (ram->pages[i]) { free(ram->pages[i]); ram->pages[i]=NULL; --ram->allocatedPages; }
+        } else {
+            if (!ram->pages[i]) { ram->pages[i]=created[i]; ++ram->allocatedPages; }
+            memcpy(ram->pages[i],s->pages[i]->data,GBAX_PAGE_SIZE);
+        }
+    }
+    ARMSetComputeTurbo(gba->cpu,s->turbo);
+    gba->cpu->gbaxFraction=s->fraction;
+    /* Same SAVX epoch: the host session is still valid. Unlike named states,
+     * do not reset or change the persistent session here. */
+    _rwHistory[--_rwCount]=NULL; _rwFree(s);
+    return true;
+}

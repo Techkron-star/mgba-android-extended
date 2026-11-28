@@ -283,6 +283,32 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "15"
    },
    {
+      "mgba_gbax_rewind_budget",
+      "GBAX Rewind Memory",
+      NULL,
+      "Native page-sharing history; clears on persistent save operations. Disabled by default.",
+      NULL,
+      "performance",
+      {
+         { "0", "Off" }, { "16", "16 MiB" }, { "32", "32 MiB" },
+         { "64", "64 MiB" }, { "96", "96 MiB" }, { NULL, NULL },
+      },
+      "0"
+   },
+   {
+      "mgba_gbax_rewind_command",
+      "GBAX Rewind Command",
+      NULL,
+      "Frontend command: alternate step or clear values to trigger once.",
+      NULL,
+      "performance",
+      {
+         { "idle", NULL }, { "step-a", NULL }, { "step-b", NULL },
+         { "clear-a", NULL }, { "clear-b", NULL }, { NULL, NULL },
+      },
+      "idle"
+   },
+   {
       "mgba_gbax_cpu",
       "GBAX Compute Turbo (Restart)",
       NULL,

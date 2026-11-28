@@ -10,6 +10,8 @@ lib = C.CDLL(str(pathlib.Path(sys.argv[1]).resolve()))
 class Game(C.Structure):
     _fields_ = [("path", C.c_char_p), ("data", C.c_void_p),
                 ("size", C.c_size_t), ("meta", C.c_char_p)]
+class Variable(C.Structure):
+    _fields_ = [("key", C.c_char_p), ("value", C.c_char_p)]
 ENV = C.CFUNCTYPE(C.c_bool, C.c_uint, C.c_void_p)
 VIDEO = C.CFUNCTYPE(None, C.c_void_p, C.c_uint, C.c_uint, C.c_size_t)
 AUDIO = C.CFUNCTYPE(C.c_size_t, C.c_void_p, C.c_size_t)
@@ -30,8 +32,16 @@ lib.retro_unserialize.restype = C.c_bool
 
 with tempfile.TemporaryDirectory() as tmp:
     save_dir = C.create_string_buffer(tmp.encode())
+    options = {b'mgba_gbax_rewind_budget': b'0', b'mgba_gbax_rewind_command': b'idle'}
     @ENV
     def env(cmd, ptr):
+        if cmd == 15:
+            var = C.cast(ptr, C.POINTER(Variable))
+            value = options.get(var.contents.key)
+            if value is not None:
+                var.contents.value = value
+                return True
+            return False
         if cmd in (9, 31): # system/save dir
             C.cast(ptr, C.POINTER(C.c_void_p))[0] = C.addressof(save_dir)
             return True
@@ -63,6 +73,32 @@ with tempfile.TemporaryDirectory() as tmp:
             assert buf[4:12] == b"GBAXST01"
             status, = struct.unpack_from("<I", buf, 4+164+0x21000)
             assert status == expected, hex(status)
+            options[b'mgba_gbax_rewind_budget'] = b'32'
+            for _ in range(125):
+                lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            before, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            options[b'mgba_gbax_rewind_command'] = b'step-a'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            after, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert after < before, (before, after)
+            # Repeated unchanged command does not rewind a second time.
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            next_cycle, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert next_cycle > after
+            options[b'mgba_gbax_rewind_command'] = b'clear-a'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            cleared, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            options[b'mgba_gbax_rewind_command'] = b'step-b'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            after_clear, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert after_clear > cleared, 'cleared history must not rewind'
+            options[b'mgba_gbax_rewind_budget'] = b'0'
+            options[b'mgba_gbax_rewind_command'] = b'idle'
             assert lib.retro_unserialize(buf, n)
             assert not lib.retro_unserialize(buf, n-1)
             buf[0] = b"\x00"

@@ -505,6 +505,11 @@ bool GBAXStateActive(const struct mCore* core);
 bool GBAXStateFile(struct VFile* f);
 bool GBAXStateSave(struct GBA* gba, struct VFile* f);
 bool GBAXStateLoad(struct GBA* gba, struct VFile* f);
+/* In-process immutable page-sharing rewind; no external snapshot format. */
+void GBAXRewindClear(void);
+void GBAXRewindCapture(struct GBA*, size_t budget);
+bool GBAXRewindStep(struct GBA*);
+size_t GBAXRewindCount(void);
 
 CXX_GUARD_END
 
