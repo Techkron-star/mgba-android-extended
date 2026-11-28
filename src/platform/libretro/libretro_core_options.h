@@ -267,6 +267,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "OFF"
    },
    {
+      "mgba_gbax_cpu",
+      "GBAX Compute Turbo (Restart)",
+      NULL,
+      "Select compute multiplier for marked GBAX cartridges. Accelerates eligible IWRAM register-only instructions, not the whole emulator. Ordinary ROMs retain original timing.",
+      NULL,
+      "performance",
+      {
+         { "1", "Original (1x)" },
+         { "2", "Enhanced (2x)" },
+         { "4", "Turbo (4x)" },
+         { "8", "Extreme (8x)" },
+         { NULL, NULL },
+      },
+      "1"
+   },
+   {
       "mgba_idle_optimization",
       "Idle Loop Removal",
       NULL,

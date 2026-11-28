@@ -22,6 +22,8 @@
 #include <mgba/gba/core.h>
 #include <mgba/gba/interface.h>
 #include <mgba/internal/gba/gba.h>
+#include <mgba/internal/gba/gbax-savx-bridge.h>
+#include <mgba/internal/gba/serialize.h>
 #endif
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
@@ -330,6 +332,16 @@ static void _reloadSettings(void) {
 	}
 
 #ifdef M_CORE_GBA
+    var.key = "mgba_gbax_cpu";
+    var.value = 0;
+    int gbaxMultiplier = 1;
+    if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+        if (!strcmp(var.value,"2")) gbaxMultiplier=2;
+        else if (!strcmp(var.value,"4")) gbaxMultiplier=4;
+        else if (!strcmp(var.value,"8")) gbaxMultiplier=8;
+    }
+    mCoreConfigSetDefaultIntValue(&core->config, "gbax.cpuMultiplier", gbaxMultiplier);
+
 	var.key = "mgba_force_gbp";
 	var.value = 0;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
@@ -341,6 +353,66 @@ static void _reloadSettings(void) {
 	mCoreLoadConfig(core);
 }
 
+#ifdef M_CORE_GBA
+/* Separate native Libretro SRAM from the GBAX transactional save namespace.
+ * Content CRC is intentionally exact for this ABI revision. Never use ROM
+ * paths (which may be virtual or untrusted) as filesystem names. */
+static void _gbaxAttachLibretroSave(void) {
+    if (!GBAXStateActive(core)) return;
+    struct GBA* gba = core->board;
+    if (gba->memory.savx) return;
+    const char* dir = NULL;
+    if (!environCallback(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &dir) || !dir || !*dir) {
+        mLOG(GBA, WARN, "GBAX: frontend save directory unavailable");
+        return;
+    }
+    char a[PATH_MAX], b[PATH_MAX];
+    int na = snprintf(a, sizeof(a), "%s%sgbax-%08x.savx.0", dir, PATH_SEP, (unsigned)gba->romCrc32);
+    int nb = snprintf(b, sizeof(b), "%s%sgbax-%08x.savx.1", dir, PATH_SEP, (unsigned)gba->romCrc32);
+    if (na < 0 || nb < 0 || (size_t)na >= sizeof(a) || (size_t)nb >= sizeof(b)) return;
+    struct VFile* fa = VFileOpen(a, O_CREAT | O_RDWR);
+    struct VFile* fb = VFileOpen(b, O_CREAT | O_RDWR);
+    if (!GBAXSaveAttach(&gba->memory, fa, fb, gba->romCrc32))
+        mLOG(GBA, WARN, "GBAX: Libretro SAVX attach failed");
+}
+
+/* Libretro requires retro_serialize_size not to increase during a session.
+ * A length-prefixed fixed-capacity envelope retains the sparse named format
+ * internally. This is not the native .xsN file format. */
+#define GBAX_RETRO_HEADER 4u
+#define GBAX_RETRO_MAX (GBAX_RETRO_HEADER + 36u + GBAX_PAGE_COUNT/8u + sizeof(struct GBASerializedState) + (size_t)GBAX_PAGE_COUNT*(GBAX_PAGE_SIZE+4u))
+static bool _gbaxRetroSave(void* data, size_t size) {
+    if (!data || size != GBAX_RETRO_MAX) return false;
+    struct VFile* vfm = VFileMemChunk(NULL, 0);
+    if (!vfm) return false;
+    bool ok = mCoreSaveStateNamed(core, vfm, 0);
+    ssize_t n = vfm->size(vfm);
+    if (!ok || n <= 0 || (size_t)n > size-GBAX_RETRO_HEADER) {
+        vfm->close(vfm);
+        return false;
+    }
+    uint8_t* out = data;
+    uint32_t len = (uint32_t)n;
+    memset(out, 0, size);
+    for (unsigned i=0;i<4;++i) out[i]=(uint8_t)(len>>(8*i));
+    ok = vfm->seek(vfm,0,SEEK_SET)==0 && vfm->read(vfm,out+4,len)==(ssize_t)len;
+    vfm->close(vfm);
+    return ok;
+}
+static bool _gbaxRetroLoad(const void* data, size_t size) {
+    if (!data || size != GBAX_RETRO_MAX) return false;
+    const uint8_t* in = data;
+    uint32_t len = 0;
+    for (unsigned i=0;i<4;++i) len |= (uint32_t)in[i]<<(8*i);
+    if (len < 164u + sizeof(struct GBASerializedState) || len > size-4u) return false;
+    struct VFile* vf = VFileFromConstMemory(in+4,len);
+    if (!vf) return false;
+    bool ok = mCoreLoadStateNamed(core,vf,0);
+    vf->close(vf);
+    return ok;
+}
+#endif
+
 static void _doDeferredSetup(void) {
 	// Libretro API doesn't let you know when it's done copying data into the save buffers.
 	// On the off-hand chance that a core actually expects its buffers to be populated when
@@ -350,6 +422,9 @@ static void _doDeferredSetup(void) {
 	if (!core->loadSave(core, save)) {
 		save->close(save);
 	}
+#ifdef M_CORE_GBA
+    _gbaxAttachLibretroSave();
+#endif
 	deferredSetup = false;
 }
 
@@ -1010,6 +1085,9 @@ size_t retro_serialize_size(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
+#ifdef M_CORE_GBA
+    if (GBAXStateActive(core)) return GBAX_RETRO_MAX;
+#endif
 	struct VFile* vfm = VFileMemChunk(NULL, 0);
 	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
 	size_t size = vfm->size(vfm);
@@ -1021,6 +1099,9 @@ bool retro_serialize(void* data, size_t size) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
+#ifdef M_CORE_GBA
+    if (GBAXStateActive(core)) return _gbaxRetroSave(data,size);
+#endif
 	struct VFile* vfm = VFileMemChunk(NULL, 0);
 	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
 	if ((ssize_t) size > vfm->size(vfm)) {
@@ -1039,6 +1120,9 @@ bool retro_unserialize(const void* data, size_t size) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
+#ifdef M_CORE_GBA
+    if (GBAXStateActive(core)) return _gbaxRetroLoad(data,size);
+#endif
 	struct VFile* vfm = VFileFromConstMemory(data, size);
 	bool success = mCoreLoadStateNamed(core, vfm, SAVESTATE_RTC);
 	vfm->close(vfm);
