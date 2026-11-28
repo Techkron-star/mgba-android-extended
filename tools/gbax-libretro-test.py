@@ -99,6 +99,20 @@ with tempfile.TemporaryDirectory() as tmp:
             assert lib.retro_serialize(buf, n)
             after_clear, = struct.unpack_from("<I", buf, 4+164+0x0C)
             assert after_clear > cleared, 'cleared history must not rewind'
+            options[b'mgba_gbax_rewind_command'] = b'20-a'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            unavailable, = struct.unpack_from("<I", buf, 4+164+0x0C)
+            assert unavailable > after_clear
+            for _ in range(365):
+                lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            timed_before, = struct.unpack_from("<I", buf, 4+164+0x0C)
+            options[b'mgba_gbax_rewind_command'] = b'5-a'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            timed_after, = struct.unpack_from("<I", buf, 4+164+0x0C)
+            assert timed_after < timed_before, (timed_before, timed_after)
             options[b'mgba_gbax_rewind_budget'] = b'0'
             options[b'mgba_gbax_rewind_command'] = b'idle'
             assert lib.retro_unserialize(buf, n)

@@ -304,7 +304,8 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "performance",
       {
          { "idle", NULL }, { "step-a", NULL }, { "step-b", NULL },
-         { "clear-a", NULL }, { "clear-b", NULL }, { NULL, NULL },
+         { "clear-a", NULL }, { "clear-b", NULL }, { "5-a", NULL }, { "5-b", NULL },
+          { "10-a", NULL }, { "10-b", NULL }, { "20-a", NULL }, { "20-b", NULL }, { NULL, NULL },
       },
       "idle"
    },
