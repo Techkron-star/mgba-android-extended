@@ -1,0 +1,7 @@
+# GBAX Libretro bridge v1
+
+The marked-ROM core now attaches SAVX sidecars using RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY after deferred SRAM setup. Two files named gbax-<full-ROM-CRC32>.savx.0/.1 share the transactional native backend. No user-provided ROM path enters these names. Exact content identity is intentional: updated ROMs need a future versioned migration policy. Identical ROMs in the same save directory share sidecars; no cross-process lock. Missing frontend save directory means SAVX capability remains unavailable, never silently redirects. Legacy SRAM remains untouched.
+
+Libretro requires serialized capacity not to increase; marked ROMs report a constant maximum buffer (~64.4 MiB) with a four-byte little-endian length prefix followed by validated sparse native GBAX state and zero padding. This is not a native .xsN file; no compatibility promise with old experimental Libretro snapshots. Compression/limits and allocation behavior of the actual Android frontend remain to be checked. State restores do not roll back persistent SAVX generations; the guest must reload before commit. Ordinary ROMs keep original serialization. CPU core option mgba_gbax_cpu 1/2/4/8 is read on restart; not full CPU overclock or frontend fast-forward.
+
+CI adds a native Libretro callback harness to run the real SDK guest twice, verify the sidecar payload, fixed capacity and truncated/invalid rejection, plus a legacy smoke test. Android frontend integration is a separate step.

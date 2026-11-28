@@ -71,6 +71,15 @@ jobs:
           "$runner"
           test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.0)" = 16777252
           test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.1)" = 16777252
+      - name: Build native Libretro core
+        run: |
+          cmake -S . -B build-libretro -DBUILD_LIBRETRO=ON -DSKIP_LIBRARY=ON -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DDISABLE_DEPS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-libretro --target mgba_libretro -j2
+      - name: Execute Libretro SDK persistence and state envelope test
+        run: |
+          LIB="$(find build-libretro -name mgba_libretro.so -print -quit)"
+          test -s "$LIB"
+          python3 tools/gbax-libretro-test.py "$LIB" build-diagnostic/sdk-integration/sdk128.gba build-diagnostic/sdk-legacy.gba
       - uses: actions/upload-artifact@v4
         with:
           name: gbax-sdk-v1
