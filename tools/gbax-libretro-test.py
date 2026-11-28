@@ -77,12 +77,26 @@ with tempfile.TemporaryDirectory() as tmp:
             for _ in range(125):
                 lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            before = bytes(buf[4+164:4+164+0x61000])
+            before, = struct.unpack_from("<Q", buf, 4+164+0x310)
             options[b'mgba_gbax_rewind_command'] = b'step-a'
             lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            after = bytes(buf[4+164:4+164+0x61000])
-            assert before != after, 'rewind command should change native state'
+            after, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert after < before, (before, after)
+            # Repeated unchanged command does not rewind a second time.
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            next_cycle, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert next_cycle > after
+            options[b'mgba_gbax_rewind_command'] = b'clear-a'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            cleared, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            options[b'mgba_gbax_rewind_command'] = b'step-b'
+            lib.retro_run()
+            assert lib.retro_serialize(buf, n)
+            after_clear, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            assert after_clear > cleared, 'cleared history must not rewind'
             options[b'mgba_gbax_rewind_budget'] = b'0'
             options[b'mgba_gbax_rewind_command'] = b'idle'
             assert lib.retro_unserialize(buf, n)
