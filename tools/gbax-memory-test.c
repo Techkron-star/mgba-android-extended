@@ -20,10 +20,12 @@ int main(void) {
     assert(GBAXRead(x, GBAX_RAM_BASE, 4) == 0);
     assert(GBAXWrite(x, GBAX_RAM_BASE, 4, 0));
     assert(x->allocatedPages == 0);
+    assert(!GBAXPageDirty(x, 0));
     for (uint32_t i = 0; i < GBAX_PAGE_COUNT; ++i) {
         uint32_t a = GBAX_RAM_BASE+i*GBAX_PAGE_SIZE;
         assert(GBAXWrite(x, a, 4, i+1));
         assert(GBAXWrite(x, a+GBAX_PAGE_SIZE-1, 1, 0xA5));
+        assert(GBAXPageDirty(x, i));
     }
     assert(x->allocatedPages == GBAX_PAGE_COUNT);
     for (uint32_t i = 0; i < GBAX_PAGE_COUNT; ++i) {
@@ -38,6 +40,7 @@ int main(void) {
     assert(GBAXRead(x, GBAX_RAM_BASE+GBAX_RAM_SIZE-4, 4) == 0x12345678);
     GBAXClear(x);
     assert(x->allocatedPages == 0);
+    for (unsigned i = 0; i < GBAX_PAGE_COUNT; ++i) assert(GBAXPageDirty(x, i));
     assert(GBAXRead(x, GBAX_RAM_BASE+GBAX_RAM_SIZE-1, 4) == 0);
     GBAXClear(x);
     free(x);

@@ -391,6 +391,7 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 	if(ok) {
 		struct GBAXMemory* old=gba->memory.gbax;
 		gba->memory.gbax=next;
+		GBAXDirtyAll(next);
 		next=old;
 		ARMSetComputeTurbo(gba->cpu,turbo);
 		gba->cpu->gbaxFraction=fraction;
@@ -462,12 +463,14 @@ void GBAXRewindCapture(struct GBA* gba,size_t budget) {
     for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
         const uint8_t* live=gba->memory.gbax->pages[i];
         struct GBAXRewindPage* old=prev?prev->pages[i]:NULL;
-        if (live && old && !memcmp(live,old->data,GBAX_PAGE_SIZE)) {
+        if (live && old && (!GBAXPageDirty(gba->memory.gbax,i) ||
+                !memcmp(live,old->data,GBAX_PAGE_SIZE))) {
             ++old->refs; s->pages[i]=old;
         }
     }
     for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
         const uint8_t* live=gba->memory.gbax->pages[i];
+        if (prev && !prev->pages[i] && !GBAXPageDirty(gba->memory.gbax,i)) continue;
         if (s->pages[i] || !_xsNonzero(live)) continue;
         while (_rwCount && _rwBytes+sizeof(struct GBAXRewindPage)>budget) _rwEvict();
         if (_rwBytes+sizeof(struct GBAXRewindPage)>budget) { _rwFree(s); GBAXRewindClear(); return; }
@@ -478,6 +481,7 @@ void GBAXRewindCapture(struct GBA* gba,size_t budget) {
     }
     while (_rwCount>=GBAX_REWIND_LIMIT) _rwEvict();
     _rwHistory[_rwCount++]=s;
+    memset(gba->memory.gbax->rewindDirty,0,sizeof(gba->memory.gbax->rewindDirty));
 }
 bool GBAXRewindStep(struct GBA* gba) {
     if (!gba || !gba->memory.gbax || !_rwCount) return false;
@@ -512,6 +516,7 @@ bool GBAXRewindStep(struct GBA* gba) {
     }
     ARMSetComputeTurbo(gba->cpu,s->turbo);
     gba->cpu->gbaxFraction=s->fraction;
+    GBAXDirtyAll(ram);
     /* Same SAVX epoch: the host session is still valid. Unlike named states,
      * do not reset or change the persistent session here. */
     _rwHistory[--_rwCount]=NULL; _rwFree(s);

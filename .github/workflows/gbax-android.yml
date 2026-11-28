@@ -79,6 +79,15 @@ jobs:
         run: |
           cc -std=c99 -Wall -Wextra -Werror -I src/platform/libretro tools/gbax-turbo-input-test.c -o /tmp/gbax-turbo-input-test
           /tmp/gbax-turbo-input-test
+      - name: Verify read-only cache rewind optimization
+        run: |
+          python3 - <<'PYTEST'
+          import pathlib, shlex, subprocess
+          line = next(l for l in pathlib.Path("build-libretro/CMakeFiles/mgba_libretro.dir/flags.make").read_text().splitlines() if l.startswith("C_DEFINES ="))
+          defines = shlex.split(line.partition("=")[2])
+          subprocess.run(["cc", "-O2", "-std=c11", *defines, "-Iinclude", "-Ibuild-libretro/include", "tools/gbax-rewind-cache-test.c", "-Lbuild-libretro", "-Wl,-rpath," + str(pathlib.Path("build-libretro").resolve()), "-l:mgba_libretro.so", "-o", "/tmp/gbax-rewind-cache-test"], check=True)
+          subprocess.run(["/tmp/gbax-rewind-cache-test", "build-diagnostic/sdk.gba"], check=True)
+          PYTEST
       - name: Execute Libretro SDK persistence and state envelope test
         run: |
           LIB="$(find build-libretro -name mgba_libretro.so -print -quit)"
