@@ -104,6 +104,8 @@ struct GBAXSaveSession;
 struct GBAMemory {
 	struct GBAXMemory* gbax;
 	struct GBAXSaveSession* savx;
+	uint8_t* gbaxRomTail;
+	size_t gbaxRomSize;
 	uint32_t* bios;
 	uint32_t* wram;
 	uint32_t* iwram;
@@ -147,6 +149,24 @@ struct GBA;
 void GBAMemoryInit(struct GBA* gba);
 void GBAMemoryDeinit(struct GBA* gba);
 void GBAXDisable(struct GBA* gba);
+
+#define GBAX_ROM_BASE UINT32_C(0x48000000)
+#define GBAX_ROM_CAPACITY UINT32_C(0x08000000)
+static inline bool GBAXROMWindow(const struct GBAMemory* m,uint32_t address) {
+	return m->gbax && m->gbaxRomTail && m->romSize &&
+		address-GBAX_ROM_BASE<GBAX_ROM_CAPACITY;
+}
+static inline uint32_t GBAXROMRead(const struct GBAMemory* m,uint32_t address,unsigned width) {
+	if(!GBAXROMWindow(m,address) || !GBAXWidthValid(width))return 0;
+	uint32_t offset=(address-GBAX_ROM_BASE)&~(uint32_t)(width-1);
+	uint32_t value=0;
+	for(unsigned i=0;i<width && offset+i<m->gbaxRomSize;++i) {
+		uint32_t pos=offset+i;
+		uint8_t byte=pos<GBA_SIZE_ROM0?((const uint8_t*)m->rom)[pos]:m->gbaxRomTail[pos-GBA_SIZE_ROM0];
+		value|=(uint32_t)byte<<(8*i);
+	}
+	return value;
+}
 
 void GBAMemoryReset(struct GBA* gba);
 void GBAMemoryClearAGBPrint(struct GBA* gba);

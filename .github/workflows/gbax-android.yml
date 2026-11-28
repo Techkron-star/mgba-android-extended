@@ -52,6 +52,8 @@ jobs:
           mkdir -p build-diagnostic/savx-integration
           export GBAX_SAVX_TEST_ROM="$PWD/build-diagnostic/savx-integration/persistent.gba"
           cp "$GBAX_TEST_ROM" "$GBAX_SAVX_TEST_ROM"
+          export GBAX_ROM128_TEST="$PWD/build-diagnostic/rom128-test.gba"
+          python3 tools/gbax-rom128-test.py "$GBAX_TEST_ROM" "$GBAX_ROM128_TEST"
           runner="$(find build-gbax -type f -name test-gba-core -print -quit)"
           test -n "$runner"
           "$runner"

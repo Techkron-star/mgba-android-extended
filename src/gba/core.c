@@ -685,6 +685,7 @@ static bool _GBACoreLoadTemporarySave(struct mCore* core, struct VFile* vf) {
 }
 
 static bool _GBACoreLoadPatch(struct mCore* core, struct VFile* vf) {
+	if(((struct GBA*)core->board)->memory.gbaxRomTail)return false;
 	if (!vf) {
 		return false;
 	}

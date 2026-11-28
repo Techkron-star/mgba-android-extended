@@ -428,9 +428,41 @@ bool GBALoadROM(struct GBA* gba, struct VFile* vf) {
 		return false;
 	}
 	GBAUnloadROM(gba);
+	/* Probe before taking ownership. Legacy large carts retain their original
+	 * loader; only an exact GBAX marker enables the new aperture. */
+	ssize_t fileSize=vf->size(vf);
+	uint8_t header[0xC0];
+	bool extended=fileSize>GBA_SIZE_ROM0 &&
+		vf->seek(vf,0,SEEK_SET)==0 &&
+		vf->read(vf,header,sizeof(header))==sizeof(header) &&
+		GBAXMarkedROM(header,sizeof(header));
+	if(extended) {
+#ifdef FIXED_ROM_BUFFER
+		return false;
+#else
+		if(fileSize>GBAX_ROM_CAPACITY)return false;
+		size_t tailSize=(size_t)fileSize-GBA_SIZE_ROM0;
+		uint8_t* tail=malloc(tailSize);
+		struct GBAXMemory* pages=calloc(1,sizeof(*pages));
+		if(!tail || !pages || vf->seek(vf,GBA_SIZE_ROM0,SEEK_SET)!=GBA_SIZE_ROM0) {
+			free(tail);free(pages);return false;
+		}
+		size_t offset=0;
+		while(offset<tailSize) {
+			size_t n=tailSize-offset;
+			if(n>0x100000)n=0x100000;
+			ssize_t got=vf->read(vf,tail+offset,n);
+			if(got<=0 || (size_t)got>n) {free(tail);free(pages);return false;}
+			offset+=(size_t)got;
+		}
+		gba->memory.gbaxRomTail=tail;
+		gba->memory.gbaxRomSize=(size_t)fileSize;
+		gba->memory.gbax=pages;
+#endif
+	}
 	gba->romVf = vf;
 	gba->isPristine = true;
-	gba->pristineRomSize = vf->size(vf);
+	gba->pristineRomSize = fileSize;
 	vf->seek(vf, 0, SEEK_SET);
 	if (gba->pristineRomSize > GBA_SIZE_ROM0) {
 		char ident;
@@ -467,6 +499,7 @@ bool GBALoadROM(struct GBA* gba, struct VFile* vf) {
 		gba->memory.romSize = gba->pristineRomSize;
 	}
 	if (!gba->memory.rom) {
+		GBAXDisable(gba);
 		gba->romVf = NULL;
 		mLOG(GBA, WARN, "Couldn't map ROM");
 		return false;
@@ -474,6 +507,7 @@ bool GBALoadROM(struct GBA* gba, struct VFile* vf) {
 	gba->yankedRomSize = 0;
 	gba->memory.romMask = toPow2(gba->memory.romSize) - 1;
 	gba->romCrc32 = doCrc32(gba->memory.rom, gba->pristineRomSize);
+	if(extended)gba->romCrc32=crc32(gba->romCrc32,gba->memory.gbaxRomTail,gba->memory.gbaxRomSize-GBA_SIZE_ROM0);
 	if (popcount32(gba->memory.romSize) != 1) {
 		// This ROM is either a bad dump or homebrew. Emulate flash cart behavior.
 #ifndef FIXED_ROM_BUFFER
@@ -490,7 +524,7 @@ bool GBALoadROM(struct GBA* gba, struct VFile* vf) {
 	}
 	GBAHardwareInit(&gba->memory.hw, &((uint16_t*) gba->memory.rom)[GPIO_REG_DATA >> 1]);
 	GBAUnlCartDetect(gba);
-	if (GBAXMarkedROM(gba->memory.rom, gba->pristineRomSize)) {
+	if (!gba->memory.gbax && GBAXMarkedROM(gba->memory.rom, gba->pristineRomSize)) {
 		gba->memory.gbax = calloc(1, sizeof(*gba->memory.gbax));
 		if (!gba->memory.gbax) {
 			mLOG(GBA, ERROR, "Could not allocate GBAX page table");
@@ -562,6 +596,7 @@ void GBALoadBIOS(struct GBA* gba, struct VFile* vf) {
 }
 
 void GBAApplyPatch(struct GBA* gba, struct Patch* patch) {
+	if(gba->memory.gbaxRomTail)return; /* Patch full file offline. */
 	size_t patchedSize = patch->outputSize(patch, gba->memory.romSize);
 	if (!patchedSize || patchedSize > GBA_SIZE_ROM0) {
 		return;
