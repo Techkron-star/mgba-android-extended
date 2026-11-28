@@ -16,7 +16,20 @@
 struct GBAXMemory {
     uint8_t* pages[GBAX_PAGE_COUNT];
     uint32_t allocatedPages;
+    /* Host bookkeeping only, never part of the guest ABI/state envelope.
+     * All writers, including staging replacement and restore, invalidate it. */
+    uint32_t rewindDirty[GBAX_PAGE_COUNT / 32];
 };
+
+static inline void GBAXDirtyPage(struct GBAXMemory* x, unsigned page) {
+    x->rewindDirty[page / 32] |= UINT32_C(1) << (page % 32);
+}
+static inline bool GBAXPageDirty(const struct GBAXMemory* x, unsigned page) {
+    return (x->rewindDirty[page / 32] >> (page % 32)) & 1;
+}
+static inline void GBAXDirtyAll(struct GBAXMemory* x) {
+    memset(x->rewindDirty, 0xFF, sizeof(x->rewindDirty));
+}
 
 static inline bool GBAXMarkedROM(const void* rom, size_t size) {
     const uint8_t* bytes = (const uint8_t*) rom;
@@ -35,6 +48,7 @@ static inline void GBAXClear(struct GBAXMemory* x) {
         x->pages[i] = NULL;
     }
     x->allocatedPages = 0;
+    GBAXDirtyAll(x);
 }
 
 static inline bool GBAXWidthValid(unsigned width) {
@@ -64,6 +78,7 @@ static inline bool GBAXWrite(struct GBAXMemory* x, uint32_t address, unsigned wi
         ++x->allocatedPages;
     }
     offset %= GBAX_PAGE_SIZE;
+    GBAXDirtyPage(x, index);
     for (unsigned i = 0; i < width; ++i)
         x->pages[index][offset + i] = (uint8_t)(value >> (8 * i));
     return true;

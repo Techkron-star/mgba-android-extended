@@ -98,6 +98,7 @@ static bool replaceStage(struct GBAXMemory* ram,const uint8_t* p) {
         unsigned page=STAGE_FIRST+i;
         if(ram->pages[page]) { free(ram->pages[page]); --ram->allocatedPages; }
         ram->pages[page]=next[i];
+        GBAXDirtyPage(ram, page);
         if(next[i])++ram->allocatedPages;
     }
     return true;

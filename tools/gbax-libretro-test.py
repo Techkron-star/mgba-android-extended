@@ -77,25 +77,27 @@ with tempfile.TemporaryDirectory() as tmp:
             for _ in range(125):
                 lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            before, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            # globalCycles is debugger-only and stays zero in release builds.
+            # This short run cannot wrap the always-present master counter.
+            before, = struct.unpack_from("<I", buf, 4+164+0x0C)
             options[b'mgba_gbax_rewind_command'] = b'step-a'
             lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            after, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            after, = struct.unpack_from("<I", buf, 4+164+0x0C)
             assert after < before, (before, after)
             # Repeated unchanged command does not rewind a second time.
             lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            next_cycle, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            next_cycle, = struct.unpack_from("<I", buf, 4+164+0x0C)
             assert next_cycle > after
             options[b'mgba_gbax_rewind_command'] = b'clear-a'
             lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            cleared, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            cleared, = struct.unpack_from("<I", buf, 4+164+0x0C)
             options[b'mgba_gbax_rewind_command'] = b'step-b'
             lib.retro_run()
             assert lib.retro_serialize(buf, n)
-            after_clear, = struct.unpack_from("<Q", buf, 4+164+0x310)
+            after_clear, = struct.unpack_from("<I", buf, 4+164+0x0C)
             assert after_clear > cleared, 'cleared history must not rewind'
             options[b'mgba_gbax_rewind_budget'] = b'0'
             options[b'mgba_gbax_rewind_command'] = b'idle'
