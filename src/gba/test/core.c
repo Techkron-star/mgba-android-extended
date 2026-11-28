@@ -384,6 +384,53 @@ M_TEST_DEFINE(gbaxROM128) {
 	core->deinit(core);
 }
 
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+M_TEST_DEFINE(gbaxSDKGuest) {
+    const char* path=getenv("GBAX_SDK_TEST_ROM");
+    if(!path)skip();
+    for(unsigned boot=0;boot<2;++boot) {
+        struct mCore* core=GBACoreCreate();
+        assert_non_null(core);
+        assert_true(core->init(core));
+        mCoreInitConfig(core,NULL);
+        core->opts.useBios=false;core->opts.skipBios=true;
+        assert_true(mCoreLoadFile(core,path));
+        assert_true(mCoreAutoloadSave(core));
+        core->reset(core);
+        uint32_t result=0;
+        for(unsigned i=0;i<100000 && !result;++i) {
+            core->step(core);
+            result=core->busRead32(core,0x02000000);
+        }
+        assert_int_equal(result,0x600d0001u+boot);
+        core->unloadROM(core);
+        mCoreConfigDeinit(&core->config);
+        core->deinit(core);
+    }
+    /* Same C program without the opt-in marker must detect no extension. */
+    const char* legacy=getenv("GBAX_SDK_LEGACY_ROM");
+    assert_non_null(legacy);
+    struct mCore* core=GBACoreCreate();
+    assert_non_null(core);
+    assert_true(core->init(core));
+    mCoreInitConfig(core,NULL);
+    core->opts.useBios=false;core->opts.skipBios=true;
+    struct VFile* rom=VFileOpen(legacy,O_RDONLY);
+    assert_non_null(rom);
+    assert_true(core->loadROM(core,rom));
+    core->reset(core);
+    uint32_t result=0;
+    for(unsigned i=0;i<10000 && !result;++i) {
+        core->step(core);
+        result=core->busRead32(core,0x02000000);
+    }
+    assert_int_equal(result,0x600d0000u);
+    core->unloadROM(core);
+    mCoreConfigDeinit(&core->config);
+    core->deinit(core);
+}
+#endif
+
 M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(create),
 	cmocka_unit_test(platform),
@@ -396,5 +443,6 @@ M_TEST_SUITE_DEFINE(GBACore,
 	cmocka_unit_test(gbaxROM128)
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	, cmocka_unit_test(gbaxSavxBridge)
+	, cmocka_unit_test(gbaxSDKGuest)
 #endif
 )

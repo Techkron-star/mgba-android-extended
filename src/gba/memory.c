@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba/internal/gba/memory.h>
 #include <mgba/internal/gba/gbax-savx-bridge.h>
+#include <mgba/internal/gba/gbax-abi.h>
 
 #include <mgba/internal/arm/decoder.h>
 #include <mgba/internal/arm/macros.h>
@@ -499,6 +500,23 @@ uint32_t GBALoadBad(struct ARMCore* cpu) {
 	return value;
 }
 
+static bool _gbaxABIRegister(uint32_t address) {
+	return address-GBAX_ABI_BASE<=0x18u && !(address&3u);
+}
+static uint32_t _gbaxABIRead(const struct GBA* gba,uint32_t address) {
+	const struct GBAMemory* m=&gba->memory;
+	switch(address-GBAX_ABI_BASE) {
+	case 0: return GBAX_ABI_MAGIC;
+	case 4: return GBAX_ABI_SIGNATURE;
+	case 8: return GBAX_ABI_VERSION;
+	case 12: return GBAX_CAP_RAM64|GBAX_CAP_DMA3|GBAX_CAP_TURBO|
+		(m->savx?GBAX_CAP_SAVX:0)|(m->gbaxRomTail && m->romSize?GBAX_CAP_ROM128:0);
+	case 16: return GBAX_ABI_WORK_SIZE;
+	case 20: return m->romSize?(uint32_t)m->gbaxRomSize:0;
+	case 24: return gba->cpu->gbaxTurbo;
+	default: return 0;
+	}
+}
 uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 	struct GBA* gba = (struct GBA*) cpu->master;
 	struct GBAMemory* memory = &gba->memory;
@@ -506,6 +524,11 @@ uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter) {
 	int wait = 0;
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
+	if(memory->gbax && _gbaxABIRegister(address)) {
+		if(cpu->memory.accessSource==mACCESS_DMA)return 0;
+		if(cycleCounter)*cycleCounter+=2;
+		return _gbaxABIRead(gba,address);
+	}
 	if (memory->gbax && GBAXSaveRegister(address)) {
 		if (cpu->memory.accessSource == mACCESS_DMA) return 0;
 		if (cycleCounter) *cycleCounter += 2;
@@ -893,6 +916,7 @@ void GBAStore32(struct ARMCore* cpu, uint32_t address, int32_t value, int* cycle
 	int32_t oldValue;
 	char* waitstatesRegion = memory->waitstatesNonseq32;
 
+	if(memory->gbax && _gbaxABIRegister(address))return;
 	if (memory->gbax && GBAXSaveRegister(address)) {
 		if (cpu->memory.accessSource == mACCESS_DMA) return;
 		GBAXSaveWriteRegister(memory, address, (uint32_t)value);
@@ -1200,6 +1224,7 @@ uint32_t GBAView32(struct ARMCore* cpu, uint32_t address) {
 	struct GBA* gba = (struct GBA*) cpu->master;
 	uint32_t value = 0;
 	address &= ~3;
+	if(gba->memory.gbax && _gbaxABIRegister(address))return _gbaxABIRead(gba,address);
 	if (gba->memory.gbax && GBAXSaveRegister(address)) return GBAXSaveReadRegister(&gba->memory, address);
 	if(GBAXROMWindow(&gba->memory,address))return (uint32_t)GBAXROMRead(&gba->memory,address,4);
 	if (GBAXContains(gba->memory.gbax, address)) {

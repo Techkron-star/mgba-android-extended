@@ -32,7 +32,7 @@ jobs:
       - name: Install native test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils-arm-none-eabi libcmocka-dev libpng-dev zlib1g-dev
+          sudo apt-get install -y --no-install-recommends binutils-arm-none-eabi gcc-arm-none-eabi libnewlib-arm-none-eabi libcmocka-dev libpng-dev zlib1g-dev
       - name: Assemble original diagnostic ROM
         run: |
           mkdir -p build-diagnostic
@@ -40,6 +40,16 @@ jobs:
           arm-none-eabi-ld -Ttext=0x08000000 -e _start build-diagnostic/guest.o -o build-diagnostic/guest.elf
           arm-none-eabi-objcopy -O binary build-diagnostic/guest.elf build-diagnostic/gbax-ram64-test.gba
           python3 tools/gbax-fix-header.py build-diagnostic/gbax-ram64-test.gba
+      - name: Build C SDK diagnostic cartridge
+        run: |
+          arm-none-eabi-gcc -mcpu=arm7tdmi -marm -O2 -ffreestanding -fno-builtin -Wall -Wextra -Werror -I sdk -I include/mgba/internal/gba -c tools/gbax-sdk-test.c -o build-diagnostic/sdk.o
+          arm-none-eabi-as -mcpu=arm7tdmi tools/gbax-sdk-start.s -o build-diagnostic/sdk-start.o
+          arm-none-eabi-gcc -mcpu=arm7tdmi -marm -nostdlib -Wl,-T,tools/gbax-sdk-test.ld build-diagnostic/sdk-start.o build-diagnostic/sdk.o -lgcc -o build-diagnostic/sdk.elf
+          arm-none-eabi-objcopy -O binary build-diagnostic/sdk.elf build-diagnostic/sdk.gba
+          python3 tools/gbax-fix-header.py build-diagnostic/sdk.gba
+          mkdir -p build-diagnostic/sdk-integration
+          python3 tools/gbax-rom128-test.py build-diagnostic/sdk.gba build-diagnostic/sdk-integration/sdk128.gba
+          python3 -c 'from pathlib import Path; p=bytearray(Path("build-diagnostic/sdk.gba").read_bytes()); p[0xa0]=78; p[0xbd]=(-sum(p[0xa0:0xbd])-0x19)&255; Path("build-diagnostic/sdk-legacy.gba").write_bytes(p)'
       - name: Build native mGBA and guest regression
         run: |
           cmake -S . -B build-gbax -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_GL=OFF -DBUILD_GLES2=OFF -DBUILD_GLES3=OFF -DBUILD_SUITE=ON -DCMAKE_BUILD_TYPE=Debug
@@ -52,6 +62,8 @@ jobs:
           mkdir -p build-diagnostic/savx-integration
           export GBAX_SAVX_TEST_ROM="$PWD/build-diagnostic/savx-integration/persistent.gba"
           cp "$GBAX_TEST_ROM" "$GBAX_SAVX_TEST_ROM"
+          export GBAX_SDK_TEST_ROM="$PWD/build-diagnostic/sdk-integration/sdk128.gba"
+          export GBAX_SDK_LEGACY_ROM="$PWD/build-diagnostic/sdk-legacy.gba"
           export GBAX_ROM128_TEST="$PWD/build-diagnostic/rom128-test.gba"
           python3 tools/gbax-rom128-test.py "$GBAX_TEST_ROM" "$GBAX_ROM128_TEST"
           runner="$(find build-gbax -type f -name test-gba-core -print -quit)"
@@ -59,6 +71,15 @@ jobs:
           "$runner"
           test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.0)" = 16777252
           test "$(stat -c %s build-diagnostic/savx-integration/persistent.savx.1)" = 16777252
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gbax-sdk-v1
+          path: |
+            sdk/gbax.h
+            include/mgba/internal/gba/gbax-abi.h
+            docs/gbax-sdk.md
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: gbax-ram64-diagnostic-rom
