@@ -509,6 +509,7 @@ bool GBAXStateLoad(struct GBA* gba, struct VFile* f);
 void GBAXRewindClear(void);
 void GBAXRewindCapture(struct GBA*, size_t budget);
 bool GBAXRewindStep(struct GBA*);
+bool GBAXRewindStepBack(struct GBA*, size_t back);
 size_t GBAXRewindCount(void);
 
 CXX_GUARD_END

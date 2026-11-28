@@ -406,7 +406,7 @@ bool GBAXStateLoad(struct GBA* gba,struct VFile* f) {
 /* Native rewind, bounded immutable pages shared between adjacent snapshots.
  * Only the Libretro emulation thread uses this history. No disk writes,
  * no 64 MiB Java envelopes and no persistent SAVX session rollback. */
-#define GBAX_REWIND_LIMIT 60u
+#define GBAX_REWIND_LIMIT 21u
 struct GBAXRewindPage {
     unsigned refs;
     uint8_t data[GBAX_PAGE_SIZE];
@@ -459,6 +459,10 @@ void GBAXRewindCapture(struct GBA* gba,size_t budget) {
     s->saveEpoch=epoch; s->rom=gba->romCrc32;
     s->turbo=gba->cpu->gbaxTurbo; s->fraction=gba->cpu->gbaxFraction;
     _GBASerializeNative(gba,&s->native);
+    bool skipZero[GBAX_PAGE_COUNT]={0};
+    /* Record zero-page decisions before prev can be evicted. */
+    for (unsigned i=0;i<GBAX_PAGE_COUNT;++i)
+        skipZero[i]=prev && !prev->pages[i] && !GBAXPageDirty(gba->memory.gbax,i);
     /* First retain every unchanged page before any history eviction. */
     for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
         const uint8_t* live=gba->memory.gbax->pages[i];
@@ -470,7 +474,7 @@ void GBAXRewindCapture(struct GBA* gba,size_t budget) {
     }
     for (unsigned i=0;i<GBAX_PAGE_COUNT;++i) {
         const uint8_t* live=gba->memory.gbax->pages[i];
-        if (prev && !prev->pages[i] && !GBAXPageDirty(gba->memory.gbax,i)) continue;
+        if (skipZero[i]) continue;
         if (s->pages[i] || !_xsNonzero(live)) continue;
         while (_rwCount && _rwBytes+sizeof(struct GBAXRewindPage)>budget) _rwEvict();
         if (_rwBytes+sizeof(struct GBAXRewindPage)>budget) { _rwFree(s); GBAXRewindClear(); return; }
@@ -483,9 +487,10 @@ void GBAXRewindCapture(struct GBA* gba,size_t budget) {
     _rwHistory[_rwCount++]=s;
     memset(gba->memory.gbax->rewindDirty,0,sizeof(gba->memory.gbax->rewindDirty));
 }
-bool GBAXRewindStep(struct GBA* gba) {
-    if (!gba || !gba->memory.gbax || !_rwCount) return false;
-    struct GBAXRewindSnapshot* s=_rwHistory[_rwCount-1];
+bool GBAXRewindStepBack(struct GBA* gba, size_t back) {
+    if (!gba || !gba->memory.gbax || back>=_rwCount) return false;
+    size_t index=_rwCount-1-back;
+    struct GBAXRewindSnapshot* s=_rwHistory[index];
     if (s->rom!=gba->romCrc32 || s->saveEpoch!=GBAXSaveEpoch(&gba->memory)) {
         GBAXRewindClear(); return false;
     }
@@ -519,6 +524,10 @@ bool GBAXRewindStep(struct GBA* gba) {
     GBAXDirtyAll(ram);
     /* Same SAVX epoch: the host session is still valid. Unlike named states,
      * do not reset or change the persistent session here. */
-    _rwHistory[--_rwCount]=NULL; _rwFree(s);
+    while (_rwCount>index) {
+        struct GBAXRewindSnapshot* discard=_rwHistory[--_rwCount];
+        _rwHistory[_rwCount]=NULL; _rwFree(discard);
+    }
     return true;
 }
+bool GBAXRewindStep(struct GBA* gba) { return GBAXRewindStepBack(gba,0); }

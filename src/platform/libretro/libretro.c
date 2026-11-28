@@ -392,6 +392,12 @@ static unsigned _gbaxRewindCommand(const char* value) {
     if (!strcmp(value,"step-b")) return 2;
     if (!strcmp(value,"clear-a")) return 3;
     if (!strcmp(value,"clear-b")) return 4;
+    if (!strcmp(value,"5-a")) return 5;
+    if (!strcmp(value,"5-b")) return 6;
+    if (!strcmp(value,"10-a")) return 7;
+    if (!strcmp(value,"10-b")) return 8;
+    if (!strcmp(value,"20-a")) return 9;
+    if (!strcmp(value,"20-b")) return 10;
     return 0;
 }
 static unsigned _gbaxReadRewindOptions(void) {
@@ -424,10 +430,26 @@ static void _gbaxRewindBeforeFrame(void) {
     if (!_rwBudget) return;
     struct GBA* gba=core->board;
     _gbaxRewindFence(gba);
-    if (command>=3) _gbaxResetRewind();
-    else if (command && GBAXRewindStep(gba)) {
-        _rwFrames=0;
-        _gbaxResetTurbo();
+    if (command==3 || command==4) _gbaxResetRewind();
+    else if (command) {
+        bool restored=false;
+        if (command<=2) restored=GBAXRewindStep(gba);
+        else {
+            unsigned seconds=command<=6?5:command<=8?10:20;
+            /* 60 emulated frames per sample; reject insufficient history. */
+            size_t back=(seconds*60u-_rwFrames)/60u;
+            restored=GBAXRewindStepBack(gba,back);
+            if (!restored) {
+                struct retro_message msg={"Not enough rewind history",120};
+                environCallback(RETRO_ENVIRONMENT_SET_MESSAGE,&msg);
+                mLOG(GBA, INFO, "GBAX rewind: %u seconds unavailable",seconds);
+            }
+        }
+        if (restored) {
+            GBAXRewindCapture(gba,_rwBudget);
+            _rwFrames=0;
+            _gbaxResetTurbo();
+        }
     }
 }
 static void _gbaxRewindAfterFrame(void) {
